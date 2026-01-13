@@ -1,6 +1,5 @@
 /*
     Otto Robot Controller - Chatbot Mode (Enhanced Smooth Version)
-    Logic: Kết hợp cử động Tay và Đầu khi nói
 */
 
 #include <cJSON.h>
@@ -40,7 +39,6 @@ public:
             hw_config.right_hand_pin
         );
 
-        // NVS Loading Trim... (Giản lược để code gọn, bạn có thể thêm lại nếu cần)
         otto_.SetTrims(0, 0, 0, 0, 0, 0); 
         otto_.Home(); 
         
@@ -48,7 +46,6 @@ public:
 
         RegisterMcpTools();
 
-        // --- CHATBOT BEHAVIOR TASK ---
         xTaskCreatePinnedToCore(
             [](void* param) { static_cast<OttoController*>(param)->AutoBehaviorTask(); },
             "OttoBehavior", 
@@ -60,12 +57,10 @@ public:
         );
     }
 
-    // --- LOGIC TỰ ĐỘNG CỬ ĐỘNG ---
     void AutoBehaviorTask() {
         ESP_LOGI(TAG, "Chatbot Mode Active: Enhanced Smooth Motions");
         
         while (true) {
-            // 1. Kiểm tra trạng thái AI
             bool audio_busy = false; 
             auto state = Application::GetInstance().GetDeviceState();
             if (state == kDeviceStateSpeaking || state == kDeviceStatePlaying) {
@@ -78,43 +73,38 @@ public:
                     g_is_robot_speaking = true;
                 }
 
-                // --- LOGIC RANDOM CỬ ĐỘNG (Mix giữa Đầu và Tay) ---
                 int action_rng = rand() % 100;
 
-                // 40% Gật đầu nhẹ (Head Bob) - Rất tự nhiên khi nói
+                // 40% Gật đầu nhẹ
                 if (action_rng < 40) {
-                    otto_.HeadBob(400, 10 + (rand() % 10)); // Speed 400, Intensity 10-20
+                    otto_.HeadBob(400, 10 + (rand() % 10)); 
                 }
-                // 30% Nghiêng đầu (Head Turn)
+                // 30% Nghiêng đầu
                 else if (action_rng < 70) {
-                    otto_.HeadTurn(800, 15 + (rand() % 10)); // Speed 800, Intensity 15-25
+                    otto_.HeadTurn(800, 15 + (rand() % 10)); 
                 }
-                // 30% Múa tay (nếu có tay)
+                // 30% Tay
                 else {
                     if (has_hands_) {
                         int hand_type = rand() % 3;
                         if (hand_type == 0) otto_.HandWave(LEFT);
                         else if (hand_type == 1) otto_.HandWave(RIGHT);
                         else {
-                            // Giơ nhẹ 2 tay kiểu diễn thuyết (không giơ cao hết cỡ)
-                            int pos[6] = {90, 90, 90, 90, 120, 60}; // Tay hơi nâng lên
+                            int pos[6] = {90, 90, 90, 90, 120, 60}; 
                             otto_.MoveServos(800, pos);
                             vTaskDelay(pdMS_TO_TICKS(500));
                         }
                     } else {
-                        // Nếu không có tay thì gật đầu tiếp
                         otto_.HeadBob(500, 15);
                     }
                 }
                 
-                // Nghỉ ngắn giữa các cụm từ để không bị rối
                 vTaskDelay(pdMS_TO_TICKS(100 + (rand() % 300))); 
 
             } else {
-                // --- KHI NGỪNG NÓI ---
                 if (g_is_robot_speaking) {
                     ESP_LOGI(TAG, "Speaking End -> Return Home Smoothly");
-                    otto_.Home(); // Hàm Home giờ đã dùng MoveServos mượt mà
+                    otto_.Home(); 
                     g_is_robot_speaking = false;
                 }
                 

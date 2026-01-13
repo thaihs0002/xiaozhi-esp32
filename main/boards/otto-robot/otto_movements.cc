@@ -1,10 +1,12 @@
 #include "otto_movements.h"
 #include <algorithm>
+#include <cstdlib> // <-- QUAN TRỌNG: Thêm thư viện này để dùng rand()
+#include <cmath>   // <-- QUAN TRỌNG: Thêm thư viện này để dùng cos()
 #include "freertos/idf_additions.h"
 
 static const char* TAG = "OttoMovements";
 #define HAND_HOME_POSITION 45
-#define HEAD_HOME_POSITION 90 // Giả định chân (đầu) ở giữa là 90
+#define HEAD_HOME_POSITION 90 
 
 Otto::Otto() {
     is_otto_resting_ = false;
@@ -60,7 +62,6 @@ void Otto::SetTrims(int left_leg, int right_leg, int left_foot, int right_foot, 
 }
 
 // --- SMOOTHING HELPER ---
-// Hàm easing Cosine: tạo chuyển động mượt mà (chậm lúc đầu và cuối, nhanh ở giữa)
 float Otto::EaseInOutCosine(float x) {
     return -(cos(M_PI * x) - 1) / 2;
 }
@@ -69,7 +70,6 @@ float Otto::EaseInOutCosine(float x) {
 void Otto::MoveServos(int time_ms, int servo_target[]) {
     if (GetRestState()) SetRestState(false);
     
-    // Nếu thời gian quá ngắn, di chuyển ngay lập tức
     if (time_ms <= 10) {
         for (int i = 0; i < SERVO_COUNT; i++) {
             if (servo_pins_[i] != -1) servo_[i].SetPosition(servo_target[i]);
@@ -78,7 +78,6 @@ void Otto::MoveServos(int time_ms, int servo_target[]) {
         return;
     }
 
-    // Lấy vị trí bắt đầu
     int start_pos[SERVO_COUNT];
     for (int i = 0; i < SERVO_COUNT; i++) {
         if (servo_pins_[i] != -1) start_pos[i] = servo_[i].GetPosition();
@@ -87,10 +86,9 @@ void Otto::MoveServos(int time_ms, int servo_target[]) {
     unsigned long start_time = millis();
     unsigned long current_time = start_time;
     
-    // Vòng lặp nội suy mượt mà
     while ((current_time - start_time) < time_ms) {
         float progress = (float)(current_time - start_time) / time_ms;
-        float ease_factor = EaseInOutCosine(progress); // Áp dụng easing
+        float ease_factor = EaseInOutCosine(progress);
 
         for (int i = 0; i < SERVO_COUNT; i++) {
             if (servo_pins_[i] != -1) {
@@ -99,11 +97,10 @@ void Otto::MoveServos(int time_ms, int servo_target[]) {
             }
         }
         
-        vTaskDelay(pdMS_TO_TICKS(10)); // Cập nhật mỗi 10ms (100Hz)
+        vTaskDelay(pdMS_TO_TICKS(10));
         current_time = millis();
     }
 
-    // Đảm bảo về đúng đích cuối cùng
     for (int i = 0; i < SERVO_COUNT; i++) {
         if (servo_pins_[i] != -1) servo_[i].SetPosition(servo_target[i]);
     }
@@ -155,41 +152,35 @@ void Otto::Home(bool hands_down) {
     for (int i = 0; i < SERVO_COUNT; i++) {
         if (i == LEFT_HAND) homes[i] = hands_down ? HAND_HOME_POSITION : servo_[i].GetPosition();
         else if (i == RIGHT_HAND) homes[i] = hands_down ? (180 - HAND_HOME_POSITION) : servo_[i].GetPosition();
-        else homes[i] = HEAD_HOME_POSITION; // Đầu/Chân về 90
+        else homes[i] = HEAD_HOME_POSITION;
     }
-    MoveServos(1000, homes); // Di chuyển chậm về Home
+    MoveServos(1000, homes);
     is_otto_resting_ = true;
 }
 
 // --- NEW HEAD MOVEMENTS ---
-// Dùng LEFT_LEG và RIGHT_LEG làm Pan/Tilt cho đầu
 void Otto::HeadBob(int speed, int intensity) {
-    // Giả sử RIGHT_LEG là Pitch (Gật gù)
     int target[SERVO_COUNT];
-    // Giữ nguyên tay
     target[LEFT_HAND] = servo_[LEFT_HAND].GetPosition();
     target[RIGHT_HAND] = servo_[RIGHT_HAND].GetPosition();
-    target[LEFT_LEG] = HEAD_HOME_POSITION; // Giữ nguyên Yaw
+    target[LEFT_LEG] = HEAD_HOME_POSITION;
     target[LEFT_FOOT] = 90; target[RIGHT_FOOT] = 90;
 
-    // Gật xuống
     target[RIGHT_LEG] = HEAD_HOME_POSITION + intensity;
     MoveServos(speed/2, target);
     
-    // Ngẩng lên
     target[RIGHT_LEG] = HEAD_HOME_POSITION - intensity;
     MoveServos(speed/2, target);
 }
 
 void Otto::HeadTurn(int speed, int intensity) {
-    // Giả sử LEFT_LEG là Yaw (Xoay trái phải)
     int target[SERVO_COUNT];
     target[LEFT_HAND] = servo_[LEFT_HAND].GetPosition();
     target[RIGHT_HAND] = servo_[RIGHT_HAND].GetPosition();
     target[RIGHT_LEG] = HEAD_HOME_POSITION;
     target[LEFT_FOOT] = 90; target[RIGHT_FOOT] = 90;
 
-    // Xoay
+    // Sử dụng rand() ở đây đã có thư viện <cstdlib>
     target[LEFT_LEG] = HEAD_HOME_POSITION + (rand() % 2 == 0 ? intensity : -intensity);
     MoveServos(speed, target);
 }
