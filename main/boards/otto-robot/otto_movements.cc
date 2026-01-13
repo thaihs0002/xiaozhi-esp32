@@ -39,8 +39,8 @@ void Otto::AttachServos() {
         if (servo_pins_[i] != -1) {
             oscillators_[i].Attach(servo_pins_[i]);
             oscillators_[i].SetTrim(servo_trim_[i]);
-            // ĐÃ SỬA: Dùng SetDiffLimit thay vì EnableLimiter
-            oscillators_[i].SetDiffLimit(60); 
+            // SỬA LẠI: Dùng đúng tên hàm trong thư viện của bạn
+            oscillators_[i].EnableLimiter(60); 
         }
     }
 }
@@ -83,8 +83,8 @@ void Otto::StartSpeakingMode() {
     
     // 1. Đầu quay trái phải (Yaw)
     oscillators_[LEFT_LEG].SetO(0);
-    oscillators_[LEFT_LEG].SetA(20); // Biên độ 20 độ
-    oscillators_[LEFT_LEG].SetT(3000); // Chu kỳ 3s
+    oscillators_[LEFT_LEG].SetA(20); 
+    oscillators_[LEFT_LEG].SetT(3000); 
     oscillators_[LEFT_LEG].Play();
 
     // 2. Đầu gật nhẹ (Pitch)
