@@ -1,5 +1,5 @@
 /*
-    Otto Robot Controller - Chatbot Mode (Enhanced Smooth Version)
+    Otto Robot Controller - Chatbot Mode (Fixed Build Error)
 */
 
 #include <cJSON.h>
@@ -63,7 +63,9 @@ public:
         while (true) {
             bool audio_busy = false; 
             auto state = Application::GetInstance().GetDeviceState();
-            if (state == kDeviceStateSpeaking || state == kDeviceStatePlaying) {
+            
+            // --- SỬA LỖI TẠI ĐÂY: Chỉ kiểm tra kDeviceStateSpeaking ---
+            if (state == kDeviceStateSpeaking) {
                 audio_busy = true;
             }
 
