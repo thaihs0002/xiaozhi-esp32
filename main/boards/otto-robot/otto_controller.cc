@@ -1,121 +1,98 @@
-#include <cJSON.h>
 #include <esp_log.h>
 #include "application.h"
 #include "board.h"
 #include "config.h"
 #include "otto_movements.h"
-#include <cstring>
+#include "driver/ledc.h"
 
-#define TAG "OttoLogic"
+#define TAG "OttoController"
 
-// Biến trạng thái
-enum RobotState {
-    STATE_IDLE,
-    STATE_LISTENING,
-    STATE_SPEAKING
-};
+// Cấu hình LED trên chân Servo dư (ví dụ chân LEFT_FOOT)
+#define LED_PWM_CHANNEL LEDC_CHANNEL_5
+#define LED_PWM_PIN     8  // <<-- THAY BẰNG SỐ CHÂN THỰC TẾ CỦA BẠN
+
+enum RobotState { STATE_IDLE, STATE_LISTENING, STATE_SPEAKING };
 
 class OttoController {
 private:
     Otto otto_;
-    TaskHandle_t logic_task_handle_ = nullptr;
     RobotState current_state_ = STATE_IDLE;
-    RobotState last_state_ = STATE_SPEAKING; // Để force update lần đầu
 
-public:
-    OttoController(const HardwareConfig& hw_config) {
-        // Init Servo: LEG trái/phải đóng vai trò ĐẦU
-        otto_.Init(
-            hw_config.left_leg_pin, 
-            hw_config.right_leg_pin, 
-            -1, -1, // Không dùng chân đi bộ
-            hw_config.left_hand_pin, 
-            hw_config.right_hand_pin
-        );
-        
-        otto_.SetTrims(0, 0, 0, 0, 0, 0); // Chỉnh lệch tâm nếu cần
-        otto_.Home();
+    void InitLed() {
+        ledc_timer_config_t timer_conf = {
+            .speed_mode = LEDC_LOW_SPEED_MODE,
+            .duty_resolution = LEDC_TIMER_13_BIT,
+            .timer_num = LEDC_TIMER_1,
+            .freq_hz = 5000,
+            .clk_cfg = LEDC_AUTO_CLK
+        };
+        ledc_timer_config(&timer_conf);
 
-        // Tạo Task xử lý logic liên tục
-        xTaskCreatePinnedToCore(
-            [](void* param) { static_cast<OttoController*>(param)->Loop(); },
-            "OttoLoop", 4096, this, 1, &logic_task_handle_, 1
-        );
+        ledc_channel_config_t lcd_conf = {
+            .speed_mode = LEDC_LOW_SPEED_MODE,
+            .channel = LED_PWM_CHANNEL,
+            .timer_sel = LEDC_TIMER_1,
+            .intr_type = LEDC_INTR_DISABLE,
+            .gpio_num = LED_PWM_PIN,
+            .duty = 0,
+            .hpoint = 0
+        };
+        ledc_channel_config(&lcd_conf);
     }
 
     void UpdateDisplay(const char* text) {
-        // Gọi xuống tầng board để hiển thị chữ lên màn hình
         auto display = Board::GetInstance().GetDisplay();
-        if (display) {
-            display->SetStatus(text);
-        }
+        if (display) display->SetStatus(text);
+    }
+
+public:
+    OttoController(const HardwareConfig& hw_config) {
+        // Init Servo (Legs dùng làm Đầu)
+        otto_.Init(hw_config.left_leg_pin, hw_config.right_leg_pin, -1, -1, 
+                   hw_config.left_hand_pin, hw_config.right_hand_pin);
+        InitLed();
+        
+        xTaskCreatePinnedToCore([](void* p){ ((OttoController*)p)->Loop(); }, 
+                                "OttoLoop", 4096, this, 1, NULL, 1);
     }
 
     void Loop() {
+        static int breath = 0, dir = 1;
         while (true) {
-            // 1. Lấy trạng thái từ XiaoZhi System
             auto app_state = Application::GetInstance().GetDeviceState();
-            
-            // 2. Chuyển đổi sang trạng thái Robot
-            RobotState target_state = STATE_IDLE;
-            
-            if (app_state == kDeviceStateIdle) {
-                target_state = STATE_IDLE;
-            } 
-            else if (app_state == kDeviceStateListening || app_state == kDeviceStateRecording) {
-                target_state = STATE_LISTENING;
-            } 
-            else if (app_state == kDeviceStateSpeaking || app_state == kDeviceStatePlaying) {
-                target_state = STATE_SPEAKING;
-            }
+            RobotState target = STATE_IDLE;
 
-            // 3. Xử lý logic chuyển đổi trạng thái (State Machine)
-            if (target_state != current_state_) {
-                // Chỉ chạy 1 lần khi trạng thái thay đổi
-                current_state_ = target_state;
-                
-                switch (current_state_) {
-                    case STATE_IDLE:
-                        ESP_LOGI(TAG, ">>> IDLE: DỪNG TOÀN BỘ");
-                        otto_.Home();               // Servo về giữa ngay lập tức
-                        UpdateDisplay("IDLE");      // Màn hình hiển thị IDLE
-                        break;
+            if (app_state == kDeviceStateListening) target = STATE_LISTENING;
+            else if (app_state == kDeviceStateSpeaking) target = STATE_SPEAKING;
 
-                    case STATE_LISTENING:
-                        ESP_LOGI(TAG, ">>> LISTENING: ĐỨNG YÊN NGHE");
-                        otto_.Home();               // Vẫn đứng yên
-                        UpdateDisplay("LISTENING"); // Màn hình hiển thị LISTENING
-                        break;
-
-                    case STATE_SPEAKING:
-                        ESP_LOGI(TAG, ">>> SPEAKING: BẮT ĐẦU DIỄN THUYẾT");
-                        otto_.StartSpeakingMode();  // Kích hoạt dao động mượt
-                        UpdateDisplay("SPEAKING");  // Màn hình hiển thị SPEAKING
-                        break;
+            if (target != current_state_) {
+                current_state_ = target;
+                if (current_state_ == STATE_SPEAKING) {
+                    otto_.StartSpeakingMode();
+                    UpdateDisplay("SPEAKING");
+                } else {
+                    otto_.Home();
+                    UpdateDisplay(current_state_ == STATE_LISTENING ? "LISTENING" : "IDLE");
                 }
             }
 
-            // 4. Xử lý hành động liên tục (cho chuyển động mượt)
+            // Hiệu ứng LED & Cử động
             if (current_state_ == STATE_SPEAKING) {
-                // Cập nhật vị trí servo theo hình sin mỗi 20ms
                 otto_.UpdateSpeakingMotion();
-                vTaskDelay(pdMS_TO_TICKS(20));
+                ledc_set_duty(LEDC_LOW_SPEED_MODE, LED_PWM_CHANNEL, 8000); // Sáng mạnh
             } else {
-                // Nếu không nói, kiểm tra ít thường xuyên hơn để tiết kiệm CPU
-                vTaskDelay(pdMS_TO_TICKS(100));
+                breath += (50 * dir);
+                if (breath >= 4000 || breath <= 0) dir *= -1;
+                ledc_set_duty(LEDC_LOW_SPEED_MODE, LED_PWM_CHANNEL, breath); // Thở nhẹ
             }
+            ledc_update_duty(LEDC_LOW_SPEED_MODE, LED_PWM_CHANNEL);
+            
+            vTaskDelay(pdMS_TO_TICKS(20));
         }
-    }
-
-    ~OttoController() {
-        if (logic_task_handle_) vTaskDelete(logic_task_handle_);
     }
 };
 
-static OttoController* g_controller = nullptr;
-
+static OttoController* g_otto = nullptr;
 void InitializeOttoController(const HardwareConfig& hw_config) {
-    if (!g_controller) {
-        g_controller = new OttoController(hw_config);
-    }
+    if (!g_otto) g_otto = new OttoController(hw_config);
 }
