@@ -1,5 +1,5 @@
 /*
-    Otto Robot Controller - Chatbot Mode (Fixed Build Error)
+    Otto Robot Controller - Chatbot Mode (Build Fixed)
 */
 
 #include <cJSON.h>
@@ -58,26 +58,25 @@ public:
     }
 
     void AutoBehaviorTask() {
-        ESP_LOGI(TAG, "Chatbot Mode Active: Enhanced Smooth Motions");
+        ESP_LOGI(TAG, "Chatbot Mode Active: Speaking logic updated");
         
         while (true) {
             bool audio_busy = false; 
             auto state = Application::GetInstance().GetDeviceState();
             
-            // --- SỬA LỖI TẠI ĐÂY: Chỉ kiểm tra kDeviceStateSpeaking ---
+            // --- FIX LỖI: CHỈ KIỂM TRA SPEAKING ---
             if (state == kDeviceStateSpeaking) {
                 audio_busy = true;
             }
 
             if (audio_busy) {
                 if (!g_is_robot_speaking) {
-                    ESP_LOGI(TAG, "Speaking Start -> Motion Active");
                     g_is_robot_speaking = true;
                 }
 
                 int action_rng = rand() % 100;
 
-                // 40% Gật đầu nhẹ
+                // 40% Gật đầu
                 if (action_rng < 40) {
                     otto_.HeadBob(400, 10 + (rand() % 10)); 
                 }
@@ -105,11 +104,9 @@ public:
 
             } else {
                 if (g_is_robot_speaking) {
-                    ESP_LOGI(TAG, "Speaking End -> Return Home Smoothly");
                     otto_.Home(); 
                     g_is_robot_speaking = false;
                 }
-                
                 vTaskDelay(pdMS_TO_TICKS(100));
             }
         }
@@ -121,12 +118,6 @@ public:
             [this](const PropertyList& properties) -> ReturnValue {
                 otto_.Home();
                 return "Reset OK";
-            });
-        mcp_server.AddTool("self.otto.wave", "Wave hand", PropertyList(),
-            [this](const PropertyList& properties) -> ReturnValue {
-                if(has_hands_) otto_.HandWave(LEFT);
-                else otto_.HeadTurn(500, 30);
-                return "Waving/Moving";
             });
     }
 

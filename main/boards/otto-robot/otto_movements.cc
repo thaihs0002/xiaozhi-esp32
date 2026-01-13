@@ -1,7 +1,7 @@
 #include "otto_movements.h"
 #include <algorithm>
-#include <cstdlib> // <-- QUAN TRỌNG: Thêm thư viện này để dùng rand()
-#include <cmath>   // <-- QUAN TRỌNG: Thêm thư viện này để dùng cos()
+#include <cstdlib> 
+#include <cmath>   
 #include "freertos/idf_additions.h"
 
 static const char* TAG = "OttoMovements";
@@ -61,12 +61,12 @@ void Otto::SetTrims(int left_leg, int right_leg, int left_foot, int right_foot, 
     }
 }
 
-// --- SMOOTHING HELPER ---
+// --- THUẬT TOÁN LÀM MƯỢT ---
 float Otto::EaseInOutCosine(float x) {
     return -(cos(M_PI * x) - 1) / 2;
 }
 
-// --- UPGRADED MOVE FUNCTION ---
+// --- HÀM DI CHUYỂN SMOOTH ---
 void Otto::MoveServos(int time_ms, int servo_target[]) {
     if (GetRestState()) SetRestState(false);
     
@@ -158,7 +158,7 @@ void Otto::Home(bool hands_down) {
     is_otto_resting_ = true;
 }
 
-// --- NEW HEAD MOVEMENTS ---
+// --- CÁC HÀM CỬ ĐỘNG ĐẦU MỚI ---
 void Otto::HeadBob(int speed, int intensity) {
     int target[SERVO_COUNT];
     target[LEFT_HAND] = servo_[LEFT_HAND].GetPosition();
@@ -180,7 +180,6 @@ void Otto::HeadTurn(int speed, int intensity) {
     target[RIGHT_LEG] = HEAD_HOME_POSITION;
     target[LEFT_FOOT] = 90; target[RIGHT_FOOT] = 90;
 
-    // Sử dụng rand() ở đây đã có thư viện <cstdlib>
     target[LEFT_LEG] = HEAD_HOME_POSITION + (rand() % 2 == 0 ? intensity : -intensity);
     MoveServos(speed, target);
 }
