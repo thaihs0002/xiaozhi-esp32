@@ -20,10 +20,14 @@
 
 #define TAG "OttoController"
 
+// --- BIẾN TOÀN CỤC ĐỂ THEO DÕI TRẠNG THÁI AUDIO ---
+static bool g_is_robot_speaking = false;
+
 class OttoController {
 private:
     Otto otto_;
     TaskHandle_t action_task_handle_ = nullptr;
+    TaskHandle_t auto_behavior_task_handle_ = nullptr;
     QueueHandle_t action_queue_;
     bool has_hands_ = false;
     bool is_action_in_progress_ = false;
@@ -424,6 +428,61 @@ private:
         }
     }
 
+    // --- TASK TỰ ĐỘNG: "NÓI THÌ CỬ ĐỘNG" (Chatbot Mode) ---
+    void AutoBehaviorTask() {
+        ESP_LOGI(TAG, "Bắt đầu chế độ Chatbot: Nói là múa!");
+        
+        while (true) {
+            // Kiểm tra trạng thái Loa (Audio Player)
+            // Logic kiểm tra xem XiaoZhi AI đang nói không
+            auto state = Application::GetInstance().GetDeviceState();
+            bool audio_busy = (state == kDeviceStateSpeaking);
+
+            if (audio_busy && !g_is_robot_speaking) {
+                // --- BẮT ĐẦU PHÁT HIỆN GIỌNG NÓI ---
+                ESP_LOGI(TAG, "Phát hiện giọng nói -> Kích hoạt cử động");
+                g_is_robot_speaking = true;
+            } else if (!audio_busy && g_is_robot_speaking) {
+                // --- HẾT NÓI: DỪ LẠI ---
+                ESP_LOGI(TAG, "Hết nói -> Dừng lại");
+                otto_.Home();  // Về vị trí chuẩn
+                g_is_robot_speaking = false;
+            }
+
+            // Nếu đang nói: Thực hiện cử động ngẫu nhiên
+            if (g_is_robot_speaking && !is_action_in_progress_) {
+                int move_type = rand() % 3;
+                
+                if (has_hands_) {
+                    if (move_type == 0) {
+                        QueueAction(ACTION_HAND_WAVE, 1, 0, 0, LEFT);  // Vẫy tay trái
+                    } else if (move_type == 1) {
+                        QueueAction(ACTION_HAND_WAVE, 1, 0, 0, RIGHT);  // Vẫy tay phải
+                    } else {
+                        QueueAction(ACTION_HANDS_UP, 1, 500, 1, 0);  // Giơ tay nhanh
+                    }
+                }
+                
+                // Nếu dùng chân LEG cho Đầu -> Lắc nhẹ (optional)
+                // QueueAction(ACTION_BEND, 1, 500, LEFT, 0);
+            }
+            
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+    }
+
+    static void AutoBehaviorTaskWrapper(void* arg) {
+        OttoController* controller = static_cast<OttoController*>(arg);
+        controller->AutoBehaviorTask();
+    }
+
+    void StartActionTaskIfNeeded() {
+        if (action_task_handle_ == nullptr) {
+            xTaskCreate(ActionTask, "otto_action", 1024 * 3, this, configMAX_PRIORITIES - 1,
+                        &action_task_handle_);
+        }
+    }
+
     void QueueAction(int action_type, int steps, int speed, int direction, int amount) {
         // 检查手部动作
         if ((action_type >= ACTION_HANDS_UP && action_type <= ACTION_HAND_WAVE) || 
@@ -515,6 +574,17 @@ public:
         action_queue_ = xQueueCreate(10, sizeof(OttoActionParams));
 
         QueueAction(ACTION_HOME, 1, 1000, 1, 0);  // direction=1表示复位手部
+
+        // --- KHỞI TẠO TASK TỰ ĐỘNG (Chatbot Mode) ---
+        xTaskCreatePinnedToCore(
+            AutoBehaviorTaskWrapper, 
+            "OttoBehavior", 
+            2048, 
+            this, 
+            1, 
+            &auto_behavior_task_handle_, 
+            0
+        );
 
         RegisterMcpTools();
     }
@@ -834,6 +904,10 @@ public:
         if (action_task_handle_ != nullptr) {
             vTaskDelete(action_task_handle_);
             action_task_handle_ = nullptr;
+        }
+        if (auto_behavior_task_handle_ != nullptr) {
+            vTaskDelete(auto_behavior_task_handle_);
+            auto_behavior_task_handle_ = nullptr;
         }
         vQueueDelete(action_queue_);
     }

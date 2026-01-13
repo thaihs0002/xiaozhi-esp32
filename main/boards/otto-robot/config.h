@@ -4,6 +4,33 @@
 #include <driver/gpio.h>
 #include <driver/adc.h>
 
+// --- CẤU HÌNH PIN ROBOT OTTO (Sửa số GPIO theo thực tế của bạn) ---
+
+// 1. SERVO - ROBOT CỦA BẠN (Đầu + Tay hoặc Chân + Tay)
+// Nếu bạn làm robot đầu gật/xoay (không đi), hãy dùng chân LEG cho ĐẦU
+#define PIN_LEFT_LEG    4   // (Hoặc dùng cho Đầu Xoay - Yaw)
+#define PIN_RIGHT_LEG   5   // (Hoặc dùng cho Đầu Gật - Pitch)
+#define PIN_LEFT_FOOT   -1  // (Không dùng chân)
+#define PIN_RIGHT_FOOT  -1  // (Không dùng chân)
+#define PIN_LEFT_HAND   6   // Tay Trái
+#define PIN_RIGHT_HAND  7   // Tay Phải
+
+// 2. AUDIO (I2S) - LOA & MIC
+#define AUDIO_INPUT_SAMPLE_RATE  16000
+#define AUDIO_OUTPUT_SAMPLE_RATE 16000
+// Chân cho Loa (I2S Speaker - MAX98357A)
+#define AUDIO_I2S_GPIO_WS   42 
+#define AUDIO_I2S_GPIO_BCLK 41
+#define AUDIO_I2S_GPIO_DOUT 40
+// Chân cho Mic (I2S Mic - INMP441)
+#define AUDIO_I2S_MIC_GPIO_WS   39
+#define AUDIO_I2S_MIC_GPIO_SCK  38
+#define AUDIO_I2S_MIC_GPIO_DIN  37
+
+// 3. CẤU HÌNH KHÁC
+#define BUILTIN_LED_GPIO        48
+#define BOOT_BUTTON_GPIO        0
+
 struct HardwareConfig {
     gpio_num_t power_charge_detect_pin;
     adc_unit_t power_adc_unit;
