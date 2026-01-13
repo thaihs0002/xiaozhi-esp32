@@ -39,8 +39,8 @@ void Otto::AttachServos() {
         if (servo_pins_[i] != -1) {
             oscillators_[i].Attach(servo_pins_[i]);
             oscillators_[i].SetTrim(servo_trim_[i]);
-            // Giới hạn tốc độ để mượt hơn
-            oscillators_[i].EnableLimiter(60); 
+            // ĐÃ SỬA: Dùng SetDiffLimit thay vì EnableLimiter
+            oscillators_[i].SetDiffLimit(60); 
         }
     }
 }
@@ -84,17 +84,17 @@ void Otto::StartSpeakingMode() {
     // 1. Đầu quay trái phải (Yaw)
     oscillators_[LEFT_LEG].SetO(0);
     oscillators_[LEFT_LEG].SetA(20); // Biên độ 20 độ
-    oscillators_[LEFT_LEG].SetT(3000); // Chu kỳ 3s mượt mà
+    oscillators_[LEFT_LEG].SetT(3000); // Chu kỳ 3s
     oscillators_[LEFT_LEG].Play();
 
     // 2. Đầu gật nhẹ (Pitch)
     oscillators_[RIGHT_LEG].SetO(0);
     oscillators_[RIGHT_LEG].SetA(15);
     oscillators_[RIGHT_LEG].SetT(2000);
-    oscillators_[RIGHT_LEG].SetPh(M_PI/2); // Lệch pha
+    oscillators_[RIGHT_LEG].SetPh(M_PI/2); 
     oscillators_[RIGHT_LEG].Play();
 
-    // 3. Hai tay trình bày
+    // 3. Hai tay
     if (has_hands_) {
         oscillators_[LEFT_HAND].SetO(30); 
         oscillators_[LEFT_HAND].SetA(30);
@@ -104,7 +104,7 @@ void Otto::StartSpeakingMode() {
         oscillators_[RIGHT_HAND].SetO(30);
         oscillators_[RIGHT_HAND].SetA(30);
         oscillators_[RIGHT_HAND].SetT(2500);
-        oscillators_[RIGHT_HAND].SetPh(M_PI); // Ngược pha tay trái
+        oscillators_[RIGHT_HAND].SetPh(M_PI); 
         oscillators_[RIGHT_HAND].Play();
     }
 }
@@ -118,7 +118,6 @@ void Otto::UpdateSpeakingMotion() {
 }
 
 void Otto::_moveServos(int time, int servo_target[]) {
-    // Hàm này giữ lại để tránh lỗi Linker nếu code khác có gọi
     for (int i = 0; i < SERVO_COUNT; i++) {
         if (servo_pins_[i] != -1) {
             oscillators_[i].SetPosition(servo_target[i]);
