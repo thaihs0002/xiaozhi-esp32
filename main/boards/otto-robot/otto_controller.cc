@@ -4,11 +4,12 @@
 #include "config.h"
 #include "otto_movements.h"
 #include "driver/ledc.h"
-#include "display/display.h" // <<-- ĐÃ THÊM: Quan trọng để gọi SetStatus
+// QUAN TRỌNG: Thêm dòng này để sửa lỗi 'incomplete type class Display'
+#include "display/display.h" 
 
 #define TAG "OttoController"
 
-// CẤU HÌNH LED (Sửa lại số GPIO chân dư của bạn vào đây, ví dụ GPIO 8)
+// CẤU HÌNH LED (Sửa lại GPIO của bạn nếu khác 8)
 #define LED_PWM_CHANNEL LEDC_CHANNEL_5
 #define LED_PWM_PIN     8 
 
@@ -20,24 +21,25 @@ private:
     RobotState current_state_ = STATE_IDLE;
 
     void InitLed() {
-        ledc_timer_config_t timer_conf = {
-            .speed_mode = LEDC_LOW_SPEED_MODE,
-            .duty_resolution = LEDC_TIMER_13_BIT,
-            .timer_num = LEDC_TIMER_1,
-            .freq_hz = 5000,
-            .clk_cfg = LEDC_AUTO_CLK
-        };
+        // Sửa lỗi "designator order": Gán trực tiếp không dùng struct initializer list
+        ledc_timer_config_t timer_conf = {};
+        timer_conf.speed_mode = LEDC_LOW_SPEED_MODE;
+        timer_conf.duty_resolution = LEDC_TIMER_13_BIT;
+        timer_conf.timer_num = LEDC_TIMER_1;
+        timer_conf.freq_hz = 5000;
+        timer_conf.clk_cfg = LEDC_AUTO_CLK;
+        
         ledc_timer_config(&timer_conf);
 
-        ledc_channel_config_t lcd_conf = {
-            .speed_mode = LEDC_LOW_SPEED_MODE,
-            .channel = LED_PWM_CHANNEL,
-            .timer_sel = LEDC_TIMER_1,
-            .intr_type = LEDC_INTR_DISABLE,
-            .gpio_num = LED_PWM_PIN,
-            .duty = 0,
-            .hpoint = 0
-        };
+        ledc_channel_config_t lcd_conf = {};
+        lcd_conf.speed_mode = LEDC_LOW_SPEED_MODE;
+        lcd_conf.channel = LED_PWM_CHANNEL;
+        lcd_conf.timer_sel = LEDC_TIMER_1;
+        lcd_conf.intr_type = LEDC_INTR_DISABLE;
+        lcd_conf.gpio_num = LED_PWM_PIN;
+        lcd_conf.duty = 0;
+        lcd_conf.hpoint = 0;
+
         ledc_channel_config(&lcd_conf);
     }
 
@@ -50,14 +52,12 @@ private:
 
 public:
     OttoController(const HardwareConfig& hw_config) {
-        // Khởi tạo Servo: Leg dùng làm Đầu, Hand dùng làm Tay
-        // Tắt chân Foot (dư) để dùng cho LED
+        // Khởi tạo Servo
         otto_.Init(hw_config.left_leg_pin, hw_config.right_leg_pin, -1, -1, 
                    hw_config.left_hand_pin, hw_config.right_hand_pin);
         
         InitLed();
         
-        // Tạo task chạy loop
         xTaskCreatePinnedToCore([](void* p){ ((OttoController*)p)->Loop(); }, 
                                 "OttoLoop", 4096, this, 1, NULL, 1);
     }
@@ -68,16 +68,13 @@ public:
             auto app_state = Application::GetInstance().GetDeviceState();
             RobotState target = STATE_IDLE;
 
-            // ĐÃ SỬA: Chỉ dùng các trạng thái cơ bản có sẵn
             if (app_state == kDeviceStateListening) {
                 target = STATE_LISTENING;
             }
             else if (app_state == kDeviceStateSpeaking) {
                 target = STATE_SPEAKING;
             }
-            // Các trạng thái khác (Idle, Connecting...) đều coi là Idle
 
-            // Xử lý chuyển đổi trạng thái
             if (target != current_state_) {
                 current_state_ = target;
                 if (current_state_ == STATE_SPEAKING) {
@@ -92,13 +89,11 @@ public:
                 }
             }
 
-            // Hiệu ứng LED & Cử động liên tục
+            // Điều khiển LED và Cử động
             if (current_state_ == STATE_SPEAKING) {
                 otto_.UpdateSpeakingMotion();
-                // LED sáng mạnh khi nói
                 ledc_set_duty(LEDC_LOW_SPEED_MODE, LED_PWM_CHANNEL, 8000); 
             } else {
-                // LED thở nhẹ khi nghỉ
                 breath += (50 * dir);
                 if (breath >= 4000 || breath <= 0) dir *= -1;
                 ledc_set_duty(LEDC_LOW_SPEED_MODE, LED_PWM_CHANNEL, breath); 
