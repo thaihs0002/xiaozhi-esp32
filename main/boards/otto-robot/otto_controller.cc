@@ -476,12 +476,7 @@ private:
         controller->AutoBehaviorTask();
     }
 
-    void StartActionTaskIfNeeded() {
-        if (action_task_handle_ == nullptr) {
-            xTaskCreate(ActionTask, "otto_action", 1024 * 3, this, configMAX_PRIORITIES - 1,
-                        &action_task_handle_);
-        }
-    }
+    
 
     void QueueAction(int action_type, int steps, int speed, int direction, int amount) {
         // 检查手部动作
