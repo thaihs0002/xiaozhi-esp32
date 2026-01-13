@@ -32,10 +32,10 @@ public:
     void DetachServos();
     void SetTrims(int left_leg, int right_leg, int left_foot, int right_foot, int left_hand = 0, int right_hand = 0);
     
-    // --- CÁC HÀM CỬ ĐỘNG ---
-    void Home();                 // Đứng yên vị trí trung lập
-    void StartSpeakingMode();    // Bật chế độ dao động mượt mà
-    void UpdateSpeakingMotion(); // Cập nhật vị trí (gọi trong loop)
+    // Các hàm quan trọng cho Chatbot
+    void Home();                 
+    void StartSpeakingMode();    
+    void UpdateSpeakingMotion(); 
     
     bool GetRestState() { return is_otto_resting_; }
     void SetRestState(bool state) { is_otto_resting_ = state; }
