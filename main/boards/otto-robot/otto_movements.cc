@@ -1,8 +1,10 @@
 #include "otto_movements.h"
-#include <cmath>
 #include <algorithm>
+#include "freertos/idf_additions.h"
 
 static const char* TAG = "OttoMovements";
+#define HAND_HOME_POSITION 45
+#define HEAD_HOME_POSITION 90 // Giả định chân (đầu) ở giữa là 90
 
 Otto::Otto() {
     is_otto_resting_ = false;
@@ -13,9 +15,7 @@ Otto::Otto() {
     }
 }
 
-Otto::~Otto() {
-    DetachServos();
-}
+Otto::~Otto() { DetachServos(); }
 
 unsigned long IRAM_ATTR millis() {
     return (unsigned long)(esp_timer_get_time() / 1000ULL);
@@ -28,28 +28,20 @@ void Otto::Init(int left_leg, int right_leg, int left_foot, int right_foot, int 
     servo_pins_[RIGHT_FOOT] = right_foot;
     servo_pins_[LEFT_HAND] = left_hand;
     servo_pins_[RIGHT_HAND] = right_hand;
-
     has_hands_ = (left_hand != -1 && right_hand != -1);
     AttachServos();
-    Home();
+    is_otto_resting_ = false;
 }
 
 void Otto::AttachServos() {
     for (int i = 0; i < SERVO_COUNT; i++) {
-        if (servo_pins_[i] != -1) {
-            oscillators_[i].Attach(servo_pins_[i]);
-            oscillators_[i].SetTrim(servo_trim_[i]);
-            // SỬA LẠI: Dùng đúng tên hàm trong thư viện của bạn
-            oscillators_[i].EnableLimiter(60); 
-        }
+        if (servo_pins_[i] != -1) servo_[i].Attach(servo_pins_[i]);
     }
 }
 
 void Otto::DetachServos() {
     for (int i = 0; i < SERVO_COUNT; i++) {
-        if (servo_pins_[i] != -1) {
-            oscillators_[i].Detach();
-        }
+        if (servo_pins_[i] != -1) servo_[i].Detach();
     }
 }
 
@@ -58,69 +50,167 @@ void Otto::SetTrims(int left_leg, int right_leg, int left_foot, int right_foot, 
     servo_trim_[RIGHT_LEG] = right_leg;
     servo_trim_[LEFT_FOOT] = left_foot;
     servo_trim_[RIGHT_FOOT] = right_foot;
-    servo_trim_[LEFT_HAND] = left_hand;
-    servo_trim_[RIGHT_HAND] = right_hand;
-    
+    if (has_hands_) {
+        servo_trim_[LEFT_HAND] = left_hand;
+        servo_trim_[RIGHT_HAND] = right_hand;
+    }
     for (int i = 0; i < SERVO_COUNT; i++) {
-        if (servo_pins_[i] != -1) {
-            oscillators_[i].SetTrim(servo_trim_[i]);
-        }
+        if (servo_pins_[i] != -1) servo_[i].SetTrim(servo_trim_[i]);
     }
 }
 
-void Otto::Home() {
+// --- SMOOTHING HELPER ---
+// Hàm easing Cosine: tạo chuyển động mượt mà (chậm lúc đầu và cuối, nhanh ở giữa)
+float Otto::EaseInOutCosine(float x) {
+    return -(cos(M_PI * x) - 1) / 2;
+}
+
+// --- UPGRADED MOVE FUNCTION ---
+void Otto::MoveServos(int time_ms, int servo_target[]) {
+    if (GetRestState()) SetRestState(false);
+    
+    // Nếu thời gian quá ngắn, di chuyển ngay lập tức
+    if (time_ms <= 10) {
+        for (int i = 0; i < SERVO_COUNT; i++) {
+            if (servo_pins_[i] != -1) servo_[i].SetPosition(servo_target[i]);
+        }
+        vTaskDelay(pdMS_TO_TICKS(time_ms));
+        return;
+    }
+
+    // Lấy vị trí bắt đầu
+    int start_pos[SERVO_COUNT];
+    for (int i = 0; i < SERVO_COUNT; i++) {
+        if (servo_pins_[i] != -1) start_pos[i] = servo_[i].GetPosition();
+    }
+
+    unsigned long start_time = millis();
+    unsigned long current_time = start_time;
+    
+    // Vòng lặp nội suy mượt mà
+    while ((current_time - start_time) < time_ms) {
+        float progress = (float)(current_time - start_time) / time_ms;
+        float ease_factor = EaseInOutCosine(progress); // Áp dụng easing
+
+        for (int i = 0; i < SERVO_COUNT; i++) {
+            if (servo_pins_[i] != -1) {
+                int new_pos = start_pos[i] + (servo_target[i] - start_pos[i]) * ease_factor;
+                servo_[i].SetPosition(new_pos);
+            }
+        }
+        
+        vTaskDelay(pdMS_TO_TICKS(10)); // Cập nhật mỗi 10ms (100Hz)
+        current_time = millis();
+    }
+
+    // Đảm bảo về đúng đích cuối cùng
+    for (int i = 0; i < SERVO_COUNT; i++) {
+        if (servo_pins_[i] != -1) servo_[i].SetPosition(servo_target[i]);
+    }
+}
+
+void Otto::MoveSingle(int position, int servo_number) {
+    if (position > 180) position = 180;
+    if (position < 0) position = 0;
+    if (GetRestState()) SetRestState(false);
+    if (servo_number >= 0 && servo_number < SERVO_COUNT && servo_pins_[servo_number] != -1) {
+        servo_[servo_number].SetPosition(position);
+    }
+}
+
+void Otto::OscillateServos(int amplitude[SERVO_COUNT], int offset[SERVO_COUNT], int period, double phase_diff[SERVO_COUNT], float cycle) {
     for (int i = 0; i < SERVO_COUNT; i++) {
         if (servo_pins_[i] != -1) {
-            oscillators_[i].Stop();
-            oscillators_[i].SetPosition(90);
+            servo_[i].SetO(offset[i]);
+            servo_[i].SetA(amplitude[i]);
+            servo_[i].SetT(period);
+            servo_[i].SetPh(phase_diff[i]);
         }
     }
+    double ref = millis();
+    double end_time = period * cycle + ref;
+    while (millis() < end_time) {
+        for (int i = 0; i < SERVO_COUNT; i++) {
+            if (servo_pins_[i] != -1) servo_[i].Refresh();
+        }
+        vTaskDelay(5);
+    }
+}
+
+void Otto::Execute2(int amplitude[SERVO_COUNT], int center_angle[SERVO_COUNT], int period, double phase_diff[SERVO_COUNT], float steps) {
+    if (GetRestState()) SetRestState(false);
+    int offset[SERVO_COUNT];
+    for (int i = 0; i < SERVO_COUNT; i++) offset[i] = center_angle[i] - 90;
+    
+    int cycles = (int)steps;
+    if (cycles >= 1) {
+        for (int i = 0; i < cycles; i++) OscillateServos(amplitude, offset, period, phase_diff, 1.0);
+    }
+    OscillateServos(amplitude, offset, period, phase_diff, (float)steps - cycles);
+}
+
+void Otto::Home(bool hands_down) {
+    if (is_otto_resting_) return;
+    int homes[SERVO_COUNT];
+    for (int i = 0; i < SERVO_COUNT; i++) {
+        if (i == LEFT_HAND) homes[i] = hands_down ? HAND_HOME_POSITION : servo_[i].GetPosition();
+        else if (i == RIGHT_HAND) homes[i] = hands_down ? (180 - HAND_HOME_POSITION) : servo_[i].GetPosition();
+        else homes[i] = HEAD_HOME_POSITION; // Đầu/Chân về 90
+    }
+    MoveServos(1000, homes); // Di chuyển chậm về Home
     is_otto_resting_ = true;
 }
 
-void Otto::StartSpeakingMode() {
-    is_otto_resting_ = false;
+// --- NEW HEAD MOVEMENTS ---
+// Dùng LEFT_LEG và RIGHT_LEG làm Pan/Tilt cho đầu
+void Otto::HeadBob(int speed, int intensity) {
+    // Giả sử RIGHT_LEG là Pitch (Gật gù)
+    int target[SERVO_COUNT];
+    // Giữ nguyên tay
+    target[LEFT_HAND] = servo_[LEFT_HAND].GetPosition();
+    target[RIGHT_HAND] = servo_[RIGHT_HAND].GetPosition();
+    target[LEFT_LEG] = HEAD_HOME_POSITION; // Giữ nguyên Yaw
+    target[LEFT_FOOT] = 90; target[RIGHT_FOOT] = 90;
+
+    // Gật xuống
+    target[RIGHT_LEG] = HEAD_HOME_POSITION + intensity;
+    MoveServos(speed/2, target);
     
-    // 1. Đầu quay trái phải (Yaw)
-    oscillators_[LEFT_LEG].SetO(0);
-    oscillators_[LEFT_LEG].SetA(20); 
-    oscillators_[LEFT_LEG].SetT(3000); 
-    oscillators_[LEFT_LEG].Play();
-
-    // 2. Đầu gật nhẹ (Pitch)
-    oscillators_[RIGHT_LEG].SetO(0);
-    oscillators_[RIGHT_LEG].SetA(15);
-    oscillators_[RIGHT_LEG].SetT(2000);
-    oscillators_[RIGHT_LEG].SetPh(M_PI/2); 
-    oscillators_[RIGHT_LEG].Play();
-
-    // 3. Hai tay
-    if (has_hands_) {
-        oscillators_[LEFT_HAND].SetO(30); 
-        oscillators_[LEFT_HAND].SetA(30);
-        oscillators_[LEFT_HAND].SetT(2500);
-        oscillators_[LEFT_HAND].Play();
-
-        oscillators_[RIGHT_HAND].SetO(30);
-        oscillators_[RIGHT_HAND].SetA(30);
-        oscillators_[RIGHT_HAND].SetT(2500);
-        oscillators_[RIGHT_HAND].SetPh(M_PI); 
-        oscillators_[RIGHT_HAND].Play();
-    }
+    // Ngẩng lên
+    target[RIGHT_LEG] = HEAD_HOME_POSITION - intensity;
+    MoveServos(speed/2, target);
 }
 
-void Otto::UpdateSpeakingMotion() {
-    for (int i = 0; i < SERVO_COUNT; i++) {
-        if (servo_pins_[i] != -1) {
-            oscillators_[i].Refresh();
-        }
-    }
+void Otto::HeadTurn(int speed, int intensity) {
+    // Giả sử LEFT_LEG là Yaw (Xoay trái phải)
+    int target[SERVO_COUNT];
+    target[LEFT_HAND] = servo_[LEFT_HAND].GetPosition();
+    target[RIGHT_HAND] = servo_[RIGHT_HAND].GetPosition();
+    target[RIGHT_LEG] = HEAD_HOME_POSITION;
+    target[LEFT_FOOT] = 90; target[RIGHT_FOOT] = 90;
+
+    // Xoay
+    target[LEFT_LEG] = HEAD_HOME_POSITION + (rand() % 2 == 0 ? intensity : -intensity);
+    MoveServos(speed, target);
 }
 
-void Otto::_moveServos(int time, int servo_target[]) {
-    for (int i = 0; i < SERVO_COUNT; i++) {
-        if (servo_pins_[i] != -1) {
-            oscillators_[i].SetPosition(servo_target[i]);
-        }
-    }
+void Otto::HandWave(int dir) {
+    if (!has_hands_) return;
+    int center[SERVO_COUNT] = {90, 90, 90, 90, 160, 20};
+    int A[SERVO_COUNT] = {0, 0, 0, 0, 0, 0};
+    double phase[SERVO_COUNT] = {0, 0, 0, 0, 0, 0};
+    
+    if (dir == LEFT) { A[4] = 25; phase[4] = M_PI/2; center[4] = 150; }
+    else { A[5] = 25; phase[5] = M_PI/2; center[5] = 30; }
+    
+    Execute2(A, center, 400, phase, 3);
 }
+
+void Otto::HandsUp(int period, int dir) {
+    if (!has_hands_) return;
+    int target[SERVO_COUNT] = {90, 90, 90, 90, 170, 10};
+    MoveServos(period, target);
+}
+
+bool Otto::GetRestState() { return is_otto_resting_; }
+void Otto::SetRestState(bool state) { is_otto_resting_ = state; }
