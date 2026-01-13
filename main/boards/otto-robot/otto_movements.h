@@ -32,7 +32,6 @@ public:
     void DetachServos();
     void SetTrims(int left_leg, int right_leg, int left_foot, int right_foot, int left_hand = 0, int right_hand = 0);
     
-    // Các hàm quan trọng cho Chatbot
     void Home();                 
     void StartSpeakingMode();    
     void UpdateSpeakingMotion(); 
