@@ -13,6 +13,7 @@
 #define LEFT 1
 #define RIGHT -1
 #define BOTH 0
+
 #define LEFT_LEG 0
 #define RIGHT_LEG 1
 #define LEFT_FOOT 2
@@ -31,24 +32,22 @@ public:
     void DetachServos();
     void SetTrims(int left_leg, int right_leg, int left_foot, int right_foot, int left_hand = 0, int right_hand = 0);
     
-    // --- CÁC HÀM QUAN TRỌNG CHO "NGUYÊN TẮC VÀNG" ---
-    void Home();                 // Đứng yên
-    void StartSpeakingMode();    // Bắt đầu chế độ trình bày mượt mà
-    void UpdateSpeakingMotion(); // Cập nhật vị trí liên tục
+    // --- CÁC HÀM CỬ ĐỘNG ---
+    void Home();                 // Đứng yên vị trí trung lập
+    void StartSpeakingMode();    // Bật chế độ dao động mượt mà
+    void UpdateSpeakingMotion(); // Cập nhật vị trí (gọi trong loop)
     
     bool GetRestState() { return is_otto_resting_; }
     void SetRestState(bool state) { is_otto_resting_ = state; }
 
 private:
+    void _moveServos(int time, int servo_target[]);
+    
     Oscillator oscillators_[SERVO_COUNT];
     int servo_pins_[SERVO_COUNT];
     int servo_trim_[SERVO_COUNT];
     bool is_otto_resting_;
     bool has_hands_;
-    
-    // Các hàm phụ trợ cũ
-    void _moveServos(int time, int servo_target[]);
-    void _execute(int A[], int O[], int T, double phase_diff[], float steps);
 };
 
 #endif
