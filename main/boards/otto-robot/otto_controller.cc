@@ -1,8 +1,8 @@
 /*
-    Otto Robot Controller - Iron Man Edition
+    Otto Robot Controller - Iron Man Edition (FIXED for Library V2/V3)
     - Head: 2 Servos (Pan/Tilt)
-    - Chest: 12-LED Ring (Arc Reactor) - Connected to PIN_LEFT_HAND (GPIO 6)
-    - Body: LED Strip (Breathing)      - Connected to PIN_RIGHT_HAND (GPIO 7)
+    - Chest: 12-LED Ring (Arc Reactor) - Connected to PIN_LED_CHEST (GPIO 6)
+    - Body: LED Strip (Breathing)      - Connected to PIN_LED_BODY (GPIO 7)
 */
 
 #include <cJSON.h>
@@ -10,7 +10,7 @@
 #include <cstdlib> 
 #include <cstring>
 #include <cmath>
-#include "led_strip.h" // Thư viện WS2812B chuẩn của ESP-IDF
+#include "led_strip.h" // Thư viện WS2812B
 
 #include "application.h"
 #include "board.h"
@@ -30,7 +30,7 @@
 #define PIN_LED_BODY        7   // Chân Right Hand cũ -> Dây quanh thân
 
 #define LED_COUNT_CHEST     12  // Số bóng vòng ngực
-#define LED_COUNT_BODY      16  // Số bóng quanh thân (bạn có thể sửa số này)
+#define LED_COUNT_BODY      16  // Số bóng quanh thân
 
 #define LED_RMT_RES_HZ      (10 * 1000 * 1000) // 10MHz Resolution
 
@@ -48,10 +48,10 @@ private:
 public:
     OttoController(const HardwareConfig& hw_config) {
         // 1. KHỞI TẠO SERVO (CHỈ ĐẦU)
-        // Chúng ta truyền -1 vào các chân không dùng để giải phóng cho LED
+        // Truyền -1 vào chân tay/chân để giải phóng GPIO cho LED
         otto_.Init(
-            hw_config.left_leg_pin,   // Giữ lại làm Đầu (Xoay/Gật)
-            hw_config.right_leg_pin,  // Giữ lại làm Đầu (Xoay/Gật)
+            hw_config.left_leg_pin,   // Đầu (Xoay/Gật)
+            hw_config.right_leg_pin,  // Đầu (Xoay/Gật)
             -1, // Left Foot -> Bỏ
             -1, // Right Foot -> Bỏ
             -1, // Left Hand -> DÀNH CHO LED NGỰC
@@ -81,18 +81,20 @@ public:
 
     // --- KHỞI TẠO LED NGỰC (ARC REACTOR) ---
     void InitChestLed() {
+        // Cấu hình tương thích ngược (Compatible Config)
         led_strip_config_t strip_config = {
             .strip_gpio_num = PIN_LED_CHEST,
             .max_leds = LED_COUNT_CHEST,
-            .led_pixel_format = LED_PIXEL_FORMAT_GRB, 
-            .led_model = LED_MODEL_WS2812,
-            .flags = { .invert_out = false },
+            // Bỏ các dòng .led_pixel_format để tránh lỗi với thư viện cũ
+            // Mặc định thư viện sẽ hiểu là WS2812 (GRB)
         };
+        
         led_strip_rmt_config_t rmt_config = {
-            .clk_src = RMT_CLK_SRC_DEFAULT,
             .resolution_hz = LED_RMT_RES_HZ,
             .flags = { .with_dma = false },
         };
+        
+        // Hàm này thường giống nhau ở cả V2 và V3
         ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &chest_strip_));
         led_strip_clear(chest_strip_);
     }
@@ -102,21 +104,18 @@ public:
         led_strip_config_t strip_config = {
             .strip_gpio_num = PIN_LED_BODY,
             .max_leds = LED_COUNT_BODY,
-            .led_pixel_format = LED_PIXEL_FORMAT_GRB, 
-            .led_model = LED_MODEL_WS2812,
-            .flags = { .invert_out = false },
         };
+        
         led_strip_rmt_config_t rmt_config = {
-            .clk_src = RMT_CLK_SRC_DEFAULT,
             .resolution_hz = LED_RMT_RES_HZ,
             .flags = { .with_dma = false },
         };
+        
         ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &body_strip_));
         led_strip_clear(body_strip_);
     }
 
     // --- HIỆU ỨNG LÒ PHẢN ỨNG (ARC REACTOR) ---
-    // Mô phỏng vòng tròn năng lượng xoay hoặc đập
     void UpdateArcReactor(int step, bool is_active) {
         if (!chest_strip_) return;
 
@@ -124,16 +123,14 @@ public:
         uint8_t base_r = 0, base_g = 100, base_b = 200; 
         
         if (is_active) { // Khi nói: Lõi nóng lên (chuyển sang trắng/đỏ)
-             base_r = 200; base_g = 50; base_b = 50; // Đỏ cam
+             base_r = 200; base_g = 50; base_b = 50; 
         }
 
         for (int i = 0; i < LED_COUNT_CHEST; i++) {
-            // Tạo hiệu ứng xoay nhẹ độ sáng
-            // offset pha dựa trên vị trí i để tạo cảm giác xoay
+            // Tạo hiệu ứng xoay nhẹ
             float spin = (sin((step * 0.2) + (i * 0.5)) + 1.0) / 2.0; 
-            int brightness = 20 + (int)(spin * 80); // Độ sáng dao động 20-100
+            int brightness = 20 + (int)(spin * 80); 
 
-            // Giảm độ sáng tổng thể để không chói
             led_strip_set_pixel(chest_strip_, i, 
                 (base_r * brightness) / 255, 
                 (base_g * brightness) / 255, 
@@ -146,20 +143,19 @@ public:
     void UpdateBodyBreathing(int step, bool is_alert) {
         if (!body_strip_) return;
 
-        // Tính toán nhịp thở (Sine wave)
-        float breath = (sin(step * 0.05) + 1.0) / 2.0; // Chậm hơn ngực
+        // Tính toán nhịp thở
+        float breath = (sin(step * 0.05) + 1.0) / 2.0;
 
         uint8_t r, g, b;
         if (is_alert) {
             // Cảnh báo/Nói: Thở nhanh màu vàng/cam
-            breath = (sin(step * 0.15) + 1.0) / 2.0; // Nhanh hơn
+            breath = (sin(step * 0.15) + 1.0) / 2.0;
             r = 150; g = 100; b = 0;
         } else {
             // Idle: Thở chậm màu xanh dương đậm (Deep Cor)
             r = 0; g = 0; b = 150;
         }
 
-        // Áp dụng độ sáng thở
         int val = 10 + (int)(breath * 100); 
 
         for (int i = 0; i < LED_COUNT_BODY; i++) {
@@ -185,12 +181,12 @@ public:
                     g_is_robot_speaking = true;
                 }
 
-                // Cử động đầu (chỉ dùng 2 servo đầu)
+                // Cử động đầu
                 int action_rng = rand() % 100;
                 if (action_rng < 40) otto_.HeadBob(400, 15);      
                 else if (action_rng < 70) otto_.HeadTurn(800, 20);
                 
-                // LED: Arc Reactor đỏ rực/xoay nhanh, Body thở gấp
+                // LED: Arc Reactor đỏ rực, Body thở gấp
                 UpdateArcReactor(tick += 2, true); 
                 UpdateBodyBreathing(tick, true);
 
@@ -203,13 +199,12 @@ public:
                     g_is_robot_speaking = false;
                 }
                 
-                // LED: Ngực sáng trắng tĩnh (Focus), Body tắt hoặc sáng nhẹ
+                // LED: Ngực sáng trắng tĩnh, Body xanh lá
                 if (chest_strip_) {
                     for(int i=0; i<LED_COUNT_CHEST; i++) 
-                        led_strip_set_pixel(chest_strip_, i, 100, 100, 100); // Trắng
+                        led_strip_set_pixel(chest_strip_, i, 100, 100, 100);
                     led_strip_refresh(chest_strip_);
                 }
-                // Body xanh lá nhẹ
                 if (body_strip_) {
                     for(int i=0; i<LED_COUNT_BODY; i++) 
                         led_strip_set_pixel(body_strip_, i, 0, 50, 0); 
@@ -245,6 +240,7 @@ public:
 
     ~OttoController() {
         if (action_task_handle_) vTaskDelete(action_task_handle_);
+        // Lưu ý: Một số bản led_strip cũ không có hàm del, nếu lỗi dòng dưới thì comment lại
         if (chest_strip_) led_strip_del(chest_strip_);
         if (body_strip_) led_strip_del(body_strip_);
     }
