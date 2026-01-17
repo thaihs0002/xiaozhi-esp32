@@ -9,7 +9,7 @@
 #include <cstring>
 #include <cmath>
 #include <driver/ledc.h> // Thêm thư viện điều khiển LED PWM
-
+#include "led_strip.h" // Thư viện điều khiển WS2812B
 #include "application.h"
 #include "board.h"
 #include "config.h"
