@@ -1,8 +1,14 @@
 /*
-    Otto Robot Controller - Iron Man Edition (Fixed for LedStrip V2)
-    - Head: 2 Servos (Pan/Tilt)
-    - Chest: 12-LED Ring (Arc Reactor) - Connected to PIN_LED_CHEST
-    - Body: 12-LED Strip (Breathing)   - Connected to PIN_LED_BODY
+    Otto Robot Controller - Iron Man Edition (SAFE GPIO FIX)
+    Board: XiaoZhi ESP32-S3 (Non-Camera/Standard)
+    
+    WIRING (Left Side Header - Top to Bottom):
+    1. Servo Pan  (Head): GPIO 39 (Was Right Leg)
+    2. Servo Tilt (Head): GPIO 17 (Was Left Leg)
+    3. LED Chest  (Ring): GPIO 18 (Was Left Foot) -> SAFE FOR LED
+    4. LED Body   (Strip): GPIO 38 (Was Right Foot) -> SAFE FOR LED
+    
+    WARNING: DO NOT USE PINS 4, 5, 6, 7 (Reserved for Audio!)
 */
 
 #include <cJSON.h>
@@ -10,7 +16,7 @@
 #include <cstdlib> 
 #include <cstring>
 #include <cmath>
-#include "led_strip.h" // Thư viện WS2812B
+#include "led_strip.h" 
 
 #include "application.h"
 #include "board.h"
@@ -24,18 +30,16 @@
 
 #define TAG "OttoController"
 
-// --- CẤU HÌNH LED ---
-#define PIN_LED_CHEST       6   // Chân Left Hand cũ -> Vòng tròn ngực
-#define PIN_LED_BODY        7   // Chân Right Hand cũ -> Dây quanh thân
+// --- CẤU HÌNH CHÂN AN TOÀN (HARDCODED) ---
+// Dựa trên sơ đồ chân chuẩn của board XiaoZhi S3
+#define PIN_SERVO_PAN       39  // Cổng Servo 1 (Trên cùng bên trái)
+#define PIN_SERVO_TILT      17  // Cổng Servo 2
+#define PIN_LED_CHEST       18  // Cổng Servo 3 -> Dùng cho LED Ngực
+#define PIN_LED_BODY        38  // Cổng Servo 4 (Dưới cùng bên trái) -> Dùng cho LED Thân
 
-// Cả 2 đều dùng 12 bóng theo yêu cầu
 #define LED_COUNT_CHEST     12  
 #define LED_COUNT_BODY      12  
-
-// ĐỘ SÁNG AN TOÀN (0-255)
-#define MAX_BRIGHTNESS      60  
-
-#define LED_RMT_RES_HZ      (10 * 1000 * 1000) // 10MHz Resolution
+#define MAX_BRIGHTNESS      80  // Giữ mức này để bảo vệ nguồn
 
 static bool g_is_robot_speaking = false;
 
@@ -49,20 +53,18 @@ private:
 
 public:
     OttoController(const HardwareConfig& hw_config) {
-        // 1. KHỞI TẠO SERVO (CHỈ ĐẦU)
+        // 1. KHỞI TẠO SERVO (CHỈ 2 CÁI ĐẦU)
+        // Chúng ta ghi đè chân từ config bằng chân cứng an toàn
         otto_.Init(
-            hw_config.left_leg_pin,   
-            hw_config.right_leg_pin,  
-            -1, // Bỏ chân
-            -1, // Bỏ chân
-            -1, // DÀNH CHO LED NGỰC (GPIO 6)
-            -1  // DÀNH CHO LED THÂN (GPIO 7)
+            PIN_SERVO_TILT,   // Left Leg -> Dùng làm Gật (Tilt)
+            PIN_SERVO_PAN,    // Right Leg -> Dùng làm Xoay (Pan)
+            -1, -1, -1, -1    // Tắt hết các chân khác
         );
 
         otto_.SetTrims(0, 0, 0, 0, 0, 0); 
         otto_.Home(); 
         
-        // 2. KHỞI TẠO LED (Đã sửa lỗi tương thích)
+        // 2. KHỞI TẠO LED (Tại chân 18 và 38)
         InitChestLed();
         InitBodyLed();
 
@@ -81,150 +83,109 @@ public:
     }
 
     void InitChestLed() {
-        // Cấu hình tương thích ngược cho Led Strip V2
+        // LED Ngực cắm vào chân 18 (Cổng thứ 3 từ trên xuống bên trái)
         led_strip_config_t strip_config = {
-            .strip_gpio_num = PIN_LED_CHEST,
+            .strip_gpio_num = PIN_LED_CHEST, 
             .max_leds = LED_COUNT_CHEST,
-            // ĐÃ XÓA: .led_pixel_format và .led_model để tránh lỗi biên dịch
         };
         led_strip_rmt_config_t rmt_config = {
-            .resolution_hz = LED_RMT_RES_HZ,
+            .resolution_hz = 10 * 1000 * 1000, 
             .flags = { .with_dma = false },
         };
-        
-        // Tạo device
+        // Thử khởi tạo, nếu lỗi RMT thì thử SPI (nhưng S3 thường chạy RMT ngon)
         ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &chest_strip_));
         led_strip_clear(chest_strip_);
     }
 
     void InitBodyLed() {
-        // Cấu hình tương thích ngược cho Led Strip V2
+        // LED Thân cắm vào chân 38 (Cổng dưới cùng bên trái)
         led_strip_config_t strip_config = {
-            .strip_gpio_num = PIN_LED_BODY,
+            .strip_gpio_num = PIN_LED_BODY, 
             .max_leds = LED_COUNT_BODY,
-            // ĐÃ XÓA: .led_pixel_format và .led_model để tránh lỗi biên dịch
         };
         led_strip_rmt_config_t rmt_config = {
-            .resolution_hz = LED_RMT_RES_HZ,
+            .resolution_hz = 10 * 1000 * 1000,
             .flags = { .with_dma = false },
         };
-        
-        // Tạo device
         ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &body_strip_));
         led_strip_clear(body_strip_);
     }
 
-    // Hàm tiện ích: Tự động giảm độ sáng để bảo vệ nguồn
-    uint8_t ScaleBrightness(int val) {
-        return (val * MAX_BRIGHTNESS) / 255;
-    }
+    uint8_t Scale(int val) { return (val * MAX_BRIGHTNESS) / 255; }
 
-    // --- HIỆU ỨNG LÒ PHẢN ỨNG (ARC REACTOR) ---
+    // --- HIỆU ỨNG ARC REACTOR (Lõi - Xoay) ---
     void UpdateArcReactor(int step, bool is_active) {
         if (!chest_strip_) return;
-
-        // Màu Iron Man: Xanh lơ (Cyan) hoặc Cam (Alert)
-        uint8_t base_r = 0, base_g = 100, base_b = 200; 
         
-        if (is_active) { 
-             base_r = 255; base_g = 60; base_b = 0; // Cam đỏ rực
-        }
+        int r = 0, g = 100, b = 200; // Cyan
+        if (is_active) { r = 255; g = 60; b = 0; } // Cam Đỏ
 
         for (int i = 0; i < LED_COUNT_CHEST; i++) {
-            // Hiệu ứng xoay
-            float spin = (sin((step * 0.25) + (i * 0.5)) + 1.0) / 2.0; 
-            int val = 50 + (int)(spin * 200); // 50-255
+            float wave = (sin((step * 0.3) + (i * 0.5)) + 1.0) / 2.0; 
+            int br = 30 + (int)(wave * 200); 
 
             led_strip_set_pixel(chest_strip_, i, 
-                ScaleBrightness((base_r * val) / 255), 
-                ScaleBrightness((base_g * val) / 255), 
-                ScaleBrightness((base_b * val) / 255));
+                Scale((r * br)/255), Scale((g * br)/255), Scale((b * br)/255));
         }
         led_strip_refresh(chest_strip_);
     }
 
-    // --- HIỆU ỨNG NHỊP THỞ (BODY) ---
-    void UpdateBodyBreathing(int step, bool is_alert) {
+    // --- HIỆU ỨNG BODY (Thở) ---
+    void UpdateBodyBreathing(int step, bool is_active) {
         if (!body_strip_) return;
 
-        float breath = (sin(step * 0.08) + 1.0) / 2.0; 
+        float breath = (sin(step * 0.05) + 1.0) / 2.0; 
+        if (is_active) breath = (sin(step * 0.2) + 1.0) / 2.0; 
 
-        uint8_t r, g, b;
-        if (is_alert) {
-            breath = (sin(step * 0.2) + 1.0) / 2.0; // Thở gấp
-            r = 255; g = 100; b = 0; // Cam
-        } else {
-            r = 0; g = 0; b = 255; // Xanh dương đậm
-        }
+        int r = 0, g = 0, b = 200; // Xanh
+        if (is_active) { r = 200; g = 100; b = 0; } // Vàng
 
-        int val = 20 + (int)(breath * 200); // Không tắt hẳn
+        int br = 20 + (int)(breath * 200);
 
         for (int i = 0; i < LED_COUNT_BODY; i++) {
-            // Body sáng đều nhau (thở đồng bộ)
             led_strip_set_pixel(body_strip_, i, 
-                ScaleBrightness((r * val) / 255), 
-                ScaleBrightness((g * val) / 255), 
-                ScaleBrightness((b * val) / 255));
+                Scale((r * br)/255), Scale((g * br)/255), Scale((b * br)/255));
         }
         led_strip_refresh(body_strip_);
     }
 
-    // --- LOGIC CHÍNH ---
     void AutoBehaviorTask() {
-        ESP_LOGI(TAG, "Iron Man Protocol Initiated (Safe Power)");
+        ESP_LOGI(TAG, "Iron Man System Online (Pins 17/39/18/38)");
         int tick = 0;
         
         while (true) {
             auto state = Application::GetInstance().GetDeviceState();
             
-            // 1. SPEAKING
             if (state == kDeviceStateSpeaking) {
-                if (!g_is_robot_speaking) {
-                    g_is_robot_speaking = true;
-                }
+                if (!g_is_robot_speaking) g_is_robot_speaking = true;
 
                 int action_rng = rand() % 100;
                 if (action_rng < 40) otto_.HeadBob(400, 15);      
                 else if (action_rng < 70) otto_.HeadTurn(800, 20);
                 
-                // LED chớp nhanh, màu nóng
                 UpdateArcReactor(tick += 3, true); 
                 UpdateBodyBreathing(tick, true);
-
-                vTaskDelay(pdMS_TO_TICKS(40)); 
+                vTaskDelay(pdMS_TO_TICKS(30)); 
             } 
-            // 2. LISTENING
             else if (state == kDeviceStateListening) {
-                if (g_is_robot_speaking) {
-                    otto_.Home();
-                    g_is_robot_speaking = false;
-                }
+                if (g_is_robot_speaking) { otto_.Home(); g_is_robot_speaking = false; }
                 
-                // Listening: Sáng tĩnh màu Xanh lá (Green)
+                // Listening: Ngực Trắng, Thân Xanh Lá
                 if (chest_strip_) {
-                    for(int i=0; i<LED_COUNT_CHEST; i++) 
-                        led_strip_set_pixel(chest_strip_, i, 0, ScaleBrightness(200), 0);
+                    for(int i=0; i<LED_COUNT_CHEST; i++) led_strip_set_pixel(chest_strip_, i, 80,80,80);
                     led_strip_refresh(chest_strip_);
                 }
                 if (body_strip_) {
-                    for(int i=0; i<LED_COUNT_BODY; i++) 
-                        led_strip_set_pixel(body_strip_, i, 0, ScaleBrightness(100), 0); 
+                    for(int i=0; i<LED_COUNT_BODY; i++) led_strip_set_pixel(body_strip_, i, 0,100,0);
                     led_strip_refresh(body_strip_);
                 }
-
                 vTaskDelay(pdMS_TO_TICKS(50));
             }
-            // 3. IDLE
-            else {
-                if (g_is_robot_speaking) {
-                    otto_.Home();
-                    g_is_robot_speaking = false;
-                }
+            else { // IDLE
+                if (g_is_robot_speaking) { otto_.Home(); g_is_robot_speaking = false; }
 
-                // Idle: Xoay chậm màu xanh lơ
                 UpdateArcReactor(tick++, false);
                 UpdateBodyBreathing(tick, false);
-
                 vTaskDelay(pdMS_TO_TICKS(50));
             }
         }
@@ -232,16 +193,12 @@ public:
 
     void RegisterMcpTools() {
         auto& mcp_server = McpServer::GetInstance();
-        mcp_server.AddTool("self.otto.reset", "Reset servos", PropertyList(),
-            [this](const PropertyList& properties) -> ReturnValue {
-                otto_.Home();
-                return "Reset OK";
-            });
+        mcp_server.AddTool("self.otto.reset", "Reset", PropertyList(),
+            [this](const PropertyList& p) -> ReturnValue { otto_.Home(); return "OK"; });
     }
 
     ~OttoController() {
         if (action_task_handle_) vTaskDelete(action_task_handle_);
-        // Nếu dòng dưới vẫn báo lỗi, hãy xóa hoặc comment nó lại
         if (chest_strip_) led_strip_del(chest_strip_);
         if (body_strip_) led_strip_del(body_strip_);
     }
