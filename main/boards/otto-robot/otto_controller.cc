@@ -1,5 +1,5 @@
 /*
-    Otto Robot Controller - Iron Man Edition (Safe Power Mode)
+    Otto Robot Controller - Iron Man Edition (Fixed for LedStrip V2)
     - Head: 2 Servos (Pan/Tilt)
     - Chest: 12-LED Ring (Arc Reactor) - Connected to PIN_LED_CHEST
     - Body: 12-LED Strip (Breathing)   - Connected to PIN_LED_BODY
@@ -25,16 +25,14 @@
 #define TAG "OttoController"
 
 // --- CẤU HÌNH LED ---
-// Kiểm tra kỹ lại dây cắm của bạn có đúng chân 6 và 7 không
-#define PIN_LED_CHEST       6   // Chân Left Hand cũ
-#define PIN_LED_BODY        7   // Chân Right Hand cũ
+#define PIN_LED_CHEST       6   // Chân Left Hand cũ -> Vòng tròn ngực
+#define PIN_LED_BODY        7   // Chân Right Hand cũ -> Dây quanh thân
 
 // Cả 2 đều dùng 12 bóng theo yêu cầu
 #define LED_COUNT_CHEST     12  
 #define LED_COUNT_BODY      12  
 
 // ĐỘ SÁNG AN TOÀN (0-255)
-// Giảm xuống thấp để tránh sụt nguồn gây nhiễu loa và lỗi LED
 #define MAX_BRIGHTNESS      60  
 
 #define LED_RMT_RES_HZ      (10 * 1000 * 1000) // 10MHz Resolution
@@ -64,7 +62,7 @@ public:
         otto_.SetTrims(0, 0, 0, 0, 0, 0); 
         otto_.Home(); 
         
-        // 2. KHỞI TẠO LED
+        // 2. KHỞI TẠO LED (Đã sửa lỗi tương thích)
         InitChestLed();
         InitBodyLed();
 
@@ -83,35 +81,35 @@ public:
     }
 
     void InitChestLed() {
+        // Cấu hình tương thích ngược cho Led Strip V2
         led_strip_config_t strip_config = {
             .strip_gpio_num = PIN_LED_CHEST,
             .max_leds = LED_COUNT_CHEST,
-            .led_pixel_format = LED_PIXEL_FORMAT_GRB, // Chuẩn WS2812B
-            .led_model = LED_MODEL_WS2812,
-            .flags = { .invert_out = false },
+            // ĐÃ XÓA: .led_pixel_format và .led_model để tránh lỗi biên dịch
         };
         led_strip_rmt_config_t rmt_config = {
-            .clk_src = RMT_CLK_SRC_DEFAULT,
             .resolution_hz = LED_RMT_RES_HZ,
             .flags = { .with_dma = false },
         };
+        
+        // Tạo device
         ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &chest_strip_));
         led_strip_clear(chest_strip_);
     }
 
     void InitBodyLed() {
+        // Cấu hình tương thích ngược cho Led Strip V2
         led_strip_config_t strip_config = {
             .strip_gpio_num = PIN_LED_BODY,
             .max_leds = LED_COUNT_BODY,
-            .led_pixel_format = LED_PIXEL_FORMAT_GRB, 
-            .led_model = LED_MODEL_WS2812,
-            .flags = { .invert_out = false },
+            // ĐÃ XÓA: .led_pixel_format và .led_model để tránh lỗi biên dịch
         };
         led_strip_rmt_config_t rmt_config = {
-            .clk_src = RMT_CLK_SRC_DEFAULT,
             .resolution_hz = LED_RMT_RES_HZ,
             .flags = { .with_dma = false },
         };
+        
+        // Tạo device
         ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &body_strip_));
         led_strip_clear(body_strip_);
     }
@@ -243,7 +241,7 @@ public:
 
     ~OttoController() {
         if (action_task_handle_) vTaskDelete(action_task_handle_);
-        // Nếu bản led_strip cũ bị lỗi dòng del thì comment lại 2 dòng dưới
+        // Nếu dòng dưới vẫn báo lỗi, hãy xóa hoặc comment nó lại
         if (chest_strip_) led_strip_del(chest_strip_);
         if (body_strip_) led_strip_del(body_strip_);
     }
