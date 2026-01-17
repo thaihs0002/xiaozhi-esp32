@@ -1,6 +1,28 @@
 #include "audio_service.h"
 #include <esp_log.h>
 #include <cstring>
+#include <cmath> // Thêm thư viện toán học cho hàm sqrt
+
+// --- LIÊN KẾT VỚI BIẾN TOÀN CỤC BÊN CONTROLLER ---
+// Dùng extern để báo cho trình biên dịch biết biến này nằm ở file khác (otto_controller.cc)
+extern float g_real_audio_rms;
+
+// --- HÀM TÍNH TOÁN ĐỘ LỚN ÂM THANH (RMS) ---
+// Hàm này sẽ tính trung bình bình phương năng lượng của đoạn âm thanh
+static void CalculateRMS(const int16_t* samples, int count) {
+    if (count <= 0) return;
+    double sum = 0;
+    // Chỉ lấy mẫu mỗi bước nhảy 4 để tiết kiệm CPU (vẫn đủ chính xác cho LED)
+    for (int i = 0; i < count; i += 4) {
+        sum += samples[i] * samples[i];
+    }
+    // Tính RMS (Root Mean Square)
+    float rms = sqrt(sum / (count / 4.0f));
+    
+    // Cập nhật biến toàn cục với hệ số giảm 0.05
+    // Giá trị này sẽ được OttoController đọc để điều khiển LED Body
+    g_real_audio_rms = rms * 0.05f; 
+}
 
 #define RATE_CVT_CFG(_src_rate, _dest_rate, _channel)        \
     (esp_ae_rate_cvt_cfg_t)                                  \
@@ -215,6 +237,10 @@ bool AudioService::ReadAudioData(std::vector<int16_t>& data, int sample_rate, in
     last_input_time_ = std::chrono::steady_clock::now();
     debug_statistics_.input_count++;
 
+    // --- TÍNH RMS CHO MICRO (INPUT) ---
+    // Giúp đèn nháy khi robot đang nghe
+    CalculateRMS(data.data(), data.size());
+
 #if CONFIG_USE_AUDIO_DEBUGGER
     // 音频调试：发送原始音频数据
     if (audio_debugger_ == nullptr) {
@@ -313,6 +339,11 @@ void AudioService::AudioOutputTask() {
             esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
             codec_->EnableOutput(true);
         }
+        
+        // --- TÍNH RMS CHO LOA (OUTPUT) ---
+        // Giúp đèn nháy khi robot đang nói (phát âm thanh)
+        CalculateRMS(task->pcm.data(), task->pcm.size());
+
         codec_->OutputData(task->pcm);
 
         /* Update the last output time */
