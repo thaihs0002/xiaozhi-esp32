@@ -1,7 +1,9 @@
 /*
-    Otto Robot Controller - Soul FX Extreme (Aggressive Viz)
-    - Chest: Heartbeat always active (High contrast)
-    - Body: Snap & Fade Viz (High dynamic range)
+    Otto Robot Controller - Soul FX V2 + AUTO WIFI CONFIG
+    - Head: GPIO 39, 38
+    - Hands: GPIO 8, 12
+    - LED Chest: Heartbeat Fade
+    - LED Body: Audio Viz + WIFI STATUS
 */
 
 #include <cJSON.h>
@@ -21,23 +23,25 @@
 #include "settings.h"
 #include <wifi_manager.h>
 
-// --- BIẾN TOÀN CỤC ĐỂ NHẬN AUDIO RMS (Sẽ dùng ở PHẦN 2) ---
-// Mặc định bằng 0, nếu bạn chưa sửa audio_service thì nó sẽ dùng giả lập
-float g_real_audio_rms = 0.0f; 
+// BIẾN ÂM LƯỢNG TỪ AUDIO SERVICE
+extern float g_real_audio_rms;
 
 #define TAG "OttoController"
 
-// --- CẤU HÌNH CHÂN ---
+// --- CẤU HÌNH ---
 #define PIN_HEAD_PAN    39  
 #define PIN_HEAD_TILT   38  
 #define PIN_HAND_LEFT   8   
 #define PIN_HAND_RIGHT  12  
-
 #define PIN_LED_CHEST   17  
 #define PIN_LED_BODY    18  
-
 #define LED_COUNT       12  
-#define MAX_BRIGHTNESS  120 // Tăng độ sáng tổng thể
+#define MAX_BRIGHTNESS  120 
+
+// THỜI GIAN CHỜ WIFI TRƯỚC KHI BÁO LỖI (Giây)
+#define WIFI_CONNECT_TIMEOUT_SEC  20 
+
+#define AUDIO_THRESHOLD 3.0f
 
 static bool g_is_robot_speaking = false;
 
@@ -45,14 +49,15 @@ class OttoController {
 private:
     Otto otto_;
     TaskHandle_t action_task_handle_ = nullptr;
-    
     led_strip_handle_t chest_strip_ = nullptr;
     led_strip_handle_t body_strip_ = nullptr;
-
-    // Biến trạng thái
-    float heartbeat_phase_ = 0.0f;
+    
     float body_current_val_ = 0.0f; 
     
+    // Biến đếm thời gian WiFi
+    int wifi_wait_tick_ = 0;
+    bool wifi_connected_once_ = false;
+
 public:
     OttoController(const HardwareConfig& hw_config) {
         otto_.Init(PIN_HEAD_TILT, PIN_HEAD_PAN, -1, -1, PIN_HAND_LEFT, PIN_HAND_RIGHT);
@@ -83,147 +88,149 @@ public:
         led_strip_clear(body_strip_);
     }
 
-    // --- XỬ LÝ HEARTBEAT (Đập mạnh, dứt khoát) ---
+    uint8_t Scale(float val) { 
+        if (val < 0) val = 0; if (val > 255) val = 255;
+        return (uint8_t)((val / 255.0f) * MAX_BRIGHTNESS); 
+    }
+
+    // --- HIỆU ỨNG WIFI DISCONNECTED (Nháy Đỏ Cảnh Báo) ---
+    void UpdateWifiErrorAnim(int step) {
+        if (!body_strip_) return;
+        // Nháy đỏ nhanh báo hiệu cần cấu hình
+        float flash = (sin(step * 0.5) + 1.0f) / 2.0f; // Nhịp nhanh
+        int r = (int)(flash * 255);
+        for(int i=0; i<LED_COUNT; i++) {
+            led_strip_set_pixel(body_strip_, i, Scale(r), 0, 0); // Đỏ toàn thân
+        }
+        led_strip_refresh(body_strip_);
+        
+        // Ngực màu Vàng cảnh báo
+        if (chest_strip_) {
+            for(int i=0; i<LED_COUNT; i++) led_strip_set_pixel(chest_strip_, i, 50, 50, 0);
+            led_strip_refresh(chest_strip_);
+        }
+    }
+
+    // --- TIM ĐẬP ---
     void UpdateHeartbeat() {
         if (!chest_strip_) return;
-        
-        // Tốc độ đập
-        heartbeat_phase_ += 0.15f; 
-        if (heartbeat_phase_ > 6.28f) heartbeat_phase_ = 0.0f;
+        float t = (float)esp_timer_get_time() / 1000000.0f;
+        float pulse = pow(sin(t * 3.5f), 12) * 255.0f; 
+        float pulse2 = pow(sin(t * 3.5f + 0.6f), 20) * 120.0f;
+        float brightness = pulse + pulse2 + 5.0f; 
+        if(brightness > 255) brightness = 255;
 
-        // Hàm mũ cao (pow 12) để tạo nhịp đập rất nhọn và khoảng nghỉ sâu
-        // Beat 1 (Mạnh) + Beat 2 (Nhẹ)
-        float beat = (pow(sin(heartbeat_phase_), 12) * 255.0f) + 
-                     (pow(sin(heartbeat_phase_ + 2.5f), 20) * 100.0f);
-        
-        // Giới hạn
-        if (beat > 255) beat = 255;
-        if (beat < 5) beat = 5; // Luôn sáng mờ nền
-
-        // Màu Cyan (Lò phản ứng)
-        uint8_t val = (uint8_t)beat;
-        // Giảm bớt Green để ra màu xanh Iron Man đẹp hơn
+        int r = 0, g = 200, b = 255;
         for (int i=0; i<LED_COUNT; i++) {
-            led_strip_set_pixel(chest_strip_, i, 0, (val*100)/255, val); 
+            led_strip_set_pixel(chest_strip_, i, Scale(r*brightness/255), Scale(g*brightness/255), Scale(b*brightness/255));
         }
         led_strip_refresh(chest_strip_);
     }
 
-    // --- XỬ LÝ BODY (VU Meter Style: Tăng nhanh, Giảm chậm) ---
-    void UpdateBodyViz(int state) {
+    // --- AUDIO VIZ ---
+    void UpdateAudioViz(int state) {
         if (!body_strip_) return;
-
         float target = 0.0f;
-
-        // 1. XÁC ĐỊNH MỤC TIÊU ĐỘ SÁNG (TARGET)
-        if (g_real_audio_rms > 1.0f) { 
-            // A. Dùng Audio Thực (Nếu có RMS từ hệ thống)
-            // RMS thường nhỏ, nhân lên để map ra 0-255
-            target = g_real_audio_rms * 10.0f; 
-            if (target > 255) target = 255;
-        } 
-        else {
-            // B. Dùng Giả Lập (Simulation) - Khi chưa sửa audio_service
-            if (state == 1) { // SPEAKING
-                // Tạo xung ngẫu nhiên cực mạnh (50 -> 255)
-                if (rand() % 2 == 0) target = 150 + (rand() % 105);
-                else target = 20; // Rớt xuống thấp để tạo độ chớp
-            } 
-            else if (state == 2) { // LISTENING
-                // Nháy theo âm thanh môi trường (nhẹ hơn)
-                if (rand() % 3 == 0) target = 50 + (rand() % 100);
-                else target = 10;
-            } 
-            else { // IDLE
-                // Thở
-                target = (sin(esp_timer_get_time() / 1000000.0f) + 1.0f) * 60.0f;
-            }
-        }
-
-        // 2. THUẬT TOÁN VU METER (Snap & Decay)
-        if (target > body_current_val_) {
-            // Tăng tốc: Nhảy ngay lập tức hoặc rất nhanh (Snap)
-            body_current_val_ += (target - body_current_val_) * 0.6f; 
+        
+        if (g_real_audio_rms > AUDIO_THRESHOLD) {
+            target = g_real_audio_rms * 4.0f; 
         } else {
-            // Giảm tốc: Tắt dần từ từ (Fade Out / Decay)
-            body_current_val_ -= (body_current_val_ - target) * 0.15f; 
+            target = (state == 0) ? (sin(esp_timer_get_time()/800000.0f)+1.0f)*30.0f : 0.0f;
         }
+        if (target > 255) target = 255;
 
-        // Kẹp giá trị
-        if (body_current_val_ > 255) body_current_val_ = 255;
-        if (body_current_val_ < 0) body_current_val_ = 0;
+        if (target > body_current_val_) body_current_val_ = target; 
+        else body_current_val_ -= (body_current_val_ - target) * 0.15f; 
 
         uint8_t val = (uint8_t)body_current_val_;
+        int r=0, g=0, b=0;
+        if (state == 1) { r=255; g=120; b=0; } 
+        else if (state == 2) { r=0; g=255; b=50; } 
+        else { r=0; g=0; b=val; } 
 
-        // 3. MÀU SẮC
-        uint8_t r=0, g=0, b=0;
-        if (state == 1) { r = val; g = val/2; b = 0; } // Speaking: Cam Đậm (Rõ rệt)
-        else if (state == 2) { r = 0; g = val; b = val/4; } // Listening: Xanh Lá
-        else { r = 0; g = 0; b = val; } // Idle: Xanh Dương
-
-        for (int i=0; i<LED_COUNT; i++) {
-            led_strip_set_pixel(body_strip_, i, r, g, b);
+        float display_val = (state == 0) ? val : (float)val; 
+        for(int i=0; i<LED_COUNT; i++) {
+            led_strip_set_pixel(body_strip_, i, Scale(r*display_val/255), Scale(g*display_val/255), Scale(b*display_val/255));
         }
         led_strip_refresh(body_strip_);
     }
 
     void AutoBehaviorTask() {
-        ESP_LOGI(TAG, "Soul FX EXTREME Online");
+        ESP_LOGI(TAG, "Soul FX V2 + WiFi Monitor Started");
         int tick = 0;
         
         while (true) {
+            auto& wifi = WifiManager::GetInstance();
+            std::string ip = wifi.GetIpAddress();
+            bool has_ip = !ip.empty() && ip != "0.0.0.0";
+
+            // --- LOGIC KIỂM TRA WIFI ---
+            if (has_ip) {
+                wifi_connected_once_ = true; // Đã từng kết nối thành công
+                wifi_wait_tick_ = 0; // Reset bộ đếm
+            } else {
+                // Chưa có IP
+                if (!wifi_connected_once_ && wifi_wait_tick_ < (WIFI_CONNECT_TIMEOUT_SEC * 10)) {
+                    wifi_wait_tick_++; // Đếm thời gian (mỗi tick 100ms)
+                }
+            }
+
+            // Nếu chưa kết nối và quá thời gian chờ -> Chế độ báo lỗi
+            if (!wifi_connected_once_ && wifi_wait_tick_ >= (WIFI_CONNECT_TIMEOUT_SEC * 10)) {
+                // Hết thời gian chờ mà chưa có IP:
+                // Nháy đèn ĐỎ cảnh báo để người dùng biết cần nhấn nút BOOT
+                UpdateWifiErrorAnim(tick++);
+                
+                // Mẹo: Nếu muốn tự động vào chế độ Config, cần gọi Application::ToggleConfigMode()
+                // Nhưng do không truy cập được API đó từ đây, ta dùng đèn báo hiệu.
+                
+                vTaskDelay(pdMS_TO_TICKS(100));
+                continue; // Bỏ qua các hiệu ứng khác
+            }
+
+            // --- LOGIC BÌNH THƯỜNG (KHI ĐÃ CÓ WIFI) ---
             auto state = Application::GetInstance().GetDeviceState();
             
-            // 1. CẬP NHẬT TIM (Luôn chạy, độc lập loop)
-            UpdateHeartbeat();
+            UpdateHeartbeat(); 
 
-            // 2. XỬ LÝ TRẠNG THÁI
             if (state == kDeviceStateSpeaking) {
                 if (!g_is_robot_speaking) g_is_robot_speaking = true;
                 
-                // Servo
-                int action_rng = rand() % 100;
-                if (action_rng < 40) otto_.HeadBob(400, 15);      
-                else if (action_rng < 70) otto_.HeadTurn(800, 20);
+                int act = rand()%100;
+                if(act<40) otto_.HeadBob(400,15);
+                else if(act<70) otto_.HeadTurn(800,20);
                 else {
-                    int hand = rand() % 3;
-                    if(hand == 0) otto_.HandWave(LEFT);
-                    else if(hand == 1) otto_.HandWave(RIGHT);
-                    else otto_.HandsUp(500, 0);
+                    int h = rand()%3;
+                    if(h==0) otto_.HandWave(LEFT);
+                    else if(h==1) otto_.HandWave(RIGHT);
+                    else otto_.HandsUp(500,0);
                 }
-                
-                // LED Body: Mode 1 (Speaking)
-                UpdateBodyViz(1);
-                
-                vTaskDelay(pdMS_TO_TICKS(25)); // Delay thấp để LED mượt
+                UpdateAudioViz(1); 
+                vTaskDelay(pdMS_TO_TICKS(20));
             } 
             else if (state == kDeviceStateListening) {
-                if (g_is_robot_speaking) { otto_.Home(); g_is_robot_speaking = false; }
-                
-                // LED Body: Mode 2 (Listening)
-                UpdateBodyViz(2);
-                vTaskDelay(pdMS_TO_TICKS(25));
+                if (g_is_robot_speaking) { otto_.Home(); g_is_robot_speaking=false; }
+                UpdateAudioViz(2); 
+                vTaskDelay(pdMS_TO_TICKS(20));
             }
             else { 
-                if (g_is_robot_speaking) { otto_.Home(); g_is_robot_speaking = false; }
-
-                // LED Body: Mode 0 (Idle)
-                UpdateBodyViz(0);
+                if (g_is_robot_speaking) { otto_.Home(); g_is_robot_speaking=false; }
+                UpdateAudioViz(0); 
                 vTaskDelay(pdMS_TO_TICKS(30));
             }
         }
     }
 
     void RegisterMcpTools() {
-        auto& mcp_server = McpServer::GetInstance();
-        mcp_server.AddTool("self.otto.reset", "Reset", PropertyList(),
-            [this](const PropertyList& p) -> ReturnValue { otto_.Home(); return "OK"; });
+        auto& s = McpServer::GetInstance();
+        s.AddTool("self.otto.reset", "Reset", PropertyList(), 
+            [this](const PropertyList& p){ otto_.Home(); return "OK"; });
     }
 
     ~OttoController() {
-        if (action_task_handle_) vTaskDelete(action_task_handle_);
-        if (chest_strip_) led_strip_del(chest_strip_);
-        if (body_strip_) led_strip_del(body_strip_);
+        if(action_task_handle_) vTaskDelete(action_task_handle_);
+        if(chest_strip_) led_strip_del(chest_strip_);
+        if(body_strip_) led_strip_del(body_strip_);
     }
 };
 
