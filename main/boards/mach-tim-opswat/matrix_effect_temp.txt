@@ -1,0 +1,92 @@
+//=================================================================
+// Matrix Effect (Hacked Mode)
+//=================================================================
+
+void OttoEyeDisplay::ShowMatrixEffect() {
+    DisplayLockGuard lock(this);
+    
+    // Hide eyes
+    if (left_eye_) lv_obj_add_flag(left_eye_, LV_OBJ_FLAG_HIDDEN);
+    if (right_eye_) lv_obj_add_flag(right_eye_, LV_OBJ_FLAG_HIDDEN);
+    if (ip_label_) lv_obj_add_flag(ip_label_, LV_OBJ_FLAG_HIDDEN);
+    
+    // Create Matrix rain effect - full screen text
+    lv_obj_t* screen = lv_screen_active();
+    
+    // Create a single label for Matrix effect
+    lv_obj_t* matrix_label = lv_label_create(screen);
+    lv_obj_set_size(matrix_label, 128, 64);
+    lv_obj_set_style_text_color(matrix_label, lv_color_white(), 0);  // White (inverted to green on OLED)
+    lv_obj_set_style_text_font(matrix_label, &lv_font_montserrat_10, 0);
+    lv_obj_align(matrix_label, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_label_set_text(matrix_label, "");
+    lv_obj_set_user_data(matrix_label, this);  // Store reference
+    
+    // Start Matrix animation timer
+    esp_timer_create_args_t args = {};
+    args.callback = MatrixTimerCallback;
+    args.arg = this;
+    args.name = "matrix_rain";
+    esp_timer_create(&args, &matrix_timer_);
+    esp_timer_start_periodic(matrix_timer_, 100000);  // 100ms updates
+    
+    ESP_LOGI("OttoEye", "Matrix effect started");
+}
+
+void OttoEyeDisplay::StopMatrixEffect() {
+    if (matrix_timer_) {
+        esp_timer_stop(matrix_timer_);
+        esp_timer_delete(matrix_timer_);
+        matrix_timer_ = nullptr;
+    }
+    
+    DisplayLockGuard lock(this);
+    
+    // Clean up Matrix labels
+    lv_obj_t* screen = lv_screen_active();
+    lv_obj_clean(screen);
+    
+    // Recreate normal UI
+    SetupUI();
+    StartBreathingAnim();
+    StartIdleLoop();
+    
+    ESP_LOGI("OttoEye", "Matrix effect stopped");
+}
+
+void OttoEyeDisplay::MatrixTimerCallback(void* arg) {
+    OttoEyeDisplay* self = (OttoEyeDisplay*)arg;
+    DisplayLockGuard lock(self);
+    
+    // Find the matrix label
+    lv_obj_t* screen = lv_screen_active();
+    lv_obj_t* matrix_label = lv_obj_get_child(screen, 0);
+    
+    if (!matrix_label) return;
+    
+    // Generate random Matrix-style characters
+    static const char matrix_chars[] = "01アイウエオカキクケコサシスセソタチツテト!@#$%^&*";
+    static char matrix_text[256];
+    static int scroll_offset = 0;
+    
+    // Create 8 rows of random characters
+    int idx = 0;
+    for (int row = 0; row < 8; row++) {
+        for (int col = 0; col < 16; col++) {
+            int char_idx = esp_random() % (sizeof(matrix_chars) - 1);
+            matrix_text[idx++] = matrix_chars[char_idx];
+        }
+        matrix_text[idx++] = '\n';
+    }
+    matrix_text[idx] = '\0';
+    
+    lv_label_set_text(matrix_label, matrix_text);
+    
+    // Scroll effect
+    scroll_offset = (scroll_offset + 1) % 64;
+    lv_obj_set_y(matrix_label, -scroll_offset);
+}
+
+void OttoEyeDisplay::ClearChatMessages() {
+    ResetToNeutral();
+}

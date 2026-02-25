@@ -1,0 +1,57 @@
+#ifndef _BOARD_CONFIG_H_
+#define _BOARD_CONFIG_H_
+
+#include <driver/gpio.h>
+
+#define AUDIO_INPUT_SAMPLE_RATE  16000
+#define AUDIO_OUTPUT_SAMPLE_RATE 24000
+
+// Sử dụng Simplex I2S mode
+#define AUDIO_I2S_METHOD_SIMPLEX
+
+#ifdef AUDIO_I2S_METHOD_SIMPLEX
+
+#define AUDIO_I2S_MIC_GPIO_WS   GPIO_NUM_4
+#define AUDIO_I2S_MIC_GPIO_SCK  GPIO_NUM_5
+#define AUDIO_I2S_MIC_GPIO_DIN  GPIO_NUM_6
+#define AUDIO_I2S_SPK_GPIO_DOUT GPIO_NUM_7
+#define AUDIO_I2S_SPK_GPIO_BCLK GPIO_NUM_15
+#define AUDIO_I2S_SPK_GPIO_LRCK GPIO_NUM_16
+
+#else
+
+#define AUDIO_I2S_GPIO_WS GPIO_NUM_4
+#define AUDIO_I2S_GPIO_BCLK GPIO_NUM_5
+#define AUDIO_I2S_GPIO_DIN  GPIO_NUM_6
+#define AUDIO_I2S_GPIO_DOUT GPIO_NUM_7
+
+#endif
+
+
+#define BUILTIN_LED_GPIO        GPIO_NUM_NC
+#define BOOT_BUTTON_GPIO        GPIO_NUM_0
+#define TOUCH_BUTTON_GPIO       GPIO_NUM_NC
+#define VOLUME_UP_BUTTON_GPIO   GPIO_NUM_NC
+#define VOLUME_DOWN_BUTTON_GPIO GPIO_NUM_NC
+
+// SH1106 128x64 OLED I2C Display Configuration
+#define LCD_TYPE_SH1106_I2C
+#define DISPLAY_WIDTH   128
+#define DISPLAY_HEIGHT  64
+#define DISPLAY_I2C_SDA_PIN  GPIO_NUM_41
+#define DISPLAY_I2C_SCL_PIN  GPIO_NUM_42
+// I2C & Address Config
+#define DISPLAY_I2C_ADDR     0x3C
+#define PCA9685_I2C_ADDR     0x40
+
+#define DISPLAY_MIRROR_X false
+#define DISPLAY_MIRROR_Y false
+
+// Lamp GPIO for MCP tool
+#define LAMP_GPIO GPIO_NUM_18
+// WS2812 LED Configuration (5V power supply, 3A total)
+#define OTTO_CHEST_LED_GPIO GPIO_NUM_43  // TX - Single white LED, heartbeat
+#define OTTO_BODY_LED_GPIO  GPIO_NUM_44  // RX - 15 LEDs strip, state colors
+#define OTTO_BODY_LED_COUNT 20
+
+#endif // _BOARD_CONFIG_H_

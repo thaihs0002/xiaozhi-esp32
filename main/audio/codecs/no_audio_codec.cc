@@ -1,6 +1,7 @@
 #include "no_audio_codec.h"
 
 #include <esp_log.h>
+#include <esp_random.h>
 #include <cmath>
 #include <cstring>
 
@@ -221,8 +222,26 @@ int NoAudioCodec::Write(const int16_t* data, int samples) {
     // output_volume_: 0-100
     // volume_factor_: 0-65536
     int32_t volume_factor = pow(double(output_volume_) / 100.0, 2) * 65536;
+    
     for (int i = 0; i < samples; i++) {
-        int64_t temp = int64_t(data[i]) * volume_factor; // 使用 int64_t 进行乘法运算
+        int16_t sample = data[i];
+        
+        // Apply audio distortion if enabled (hacked mode)
+        if (audio_distortion_enabled_) {
+            // Bit crushing: reduce bit depth for robotic sound
+            sample = (sample >> 3) << 3;  // Reduce to ~13-bit
+            
+            // Random glitches: occasional sample corruption
+            if ((esp_random() % 20) == 0) {
+                sample = (esp_random() % 2) ? INT16_MAX / 2 : -INT16_MAX / 2;
+            }
+            
+            // Add random noise
+            int16_t noise = (esp_random() % 2000) - 1000;
+            sample += noise;
+        }
+        
+        int64_t temp = int64_t(sample) * volume_factor; // 使用 int64_t 进行乘法运算
         if (temp > INT32_MAX) {
             buffer[i] = INT32_MAX;
         } else if (temp < INT32_MIN) {

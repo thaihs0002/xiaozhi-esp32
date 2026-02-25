@@ -10,12 +10,14 @@
 class NoAudioCodec : public AudioCodec {
 protected:
     std::mutex data_if_mutex_;
+    bool audio_distortion_enabled_ = false;  // NEW: For hacked mode
 
     virtual int Write(const int16_t* data, int samples) override;
     virtual int Read(int16_t* dest, int samples) override;
 
 public:
     virtual ~NoAudioCodec();
+    void SetAudioDistortion(bool enable) { audio_distortion_enabled_ = enable; }
 };
 
 class NoAudioCodecDuplex : public NoAudioCodec {

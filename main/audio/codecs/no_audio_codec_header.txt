@@ -1,0 +1,8 @@
+#include "no_audio_codec.h"
+
+#include <esp_log.h>
+#include <esp_random.h>
+#include <cmath>
+#include <cstring>
+
+#define TAG "NoAudioCodec"
